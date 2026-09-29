@@ -1,0 +1,1127 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1b1c1f">
+<title>Mostrador multifuncoes - simulacao visual</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#1c1d1f}
+body{display:grid;place-items:center;touch-action:manipulation;font-family:Arial,Helvetica,sans-serif}
+.instrument{width:min(100vw,calc(100dvh * 736 / 716));aspect-ratio:736 / 716;max-height:100dvh;display:block;touch-action:none;outline:none}
+.instrument:focus-visible{outline:2px solid #c3d2ff;outline-offset:-3px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+</style>
+<!-- v14.0 simulation only: no NMEA/CAN connection, no autopilot output; manual Wind Auto rule; uncalibrated simulated values. -->
+</head>
+<body>
+<canvas id="instrument" class="instrument" role="img" aria-label="Simulador visual do mostrador multifuncoes" tabindex="0"></canvas>
+<div class="sr-only" id="status" aria-live="polite"></div>
+<script>
+(()=>{'use strict';
+const canvas=document.getElementById('instrument'),ctx=canvas.getContext('2d'),status=document.getElementById('status');
+const W=736,H=716,OX=76,OY=85,PI=Math.PI,DEG=PI/180;
+const s={bspd:11.2,twa:38,twd:150,tws:8.9,heading:113,awd:150,selected:'twa',mode:'TRUE',menu:false};
+function pathRound(x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,r)}
+function box(x,y,w,h,r,fill,stroke,width=1){pathRound(x,y,w,h,r);ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.lineWidth=width;ctx.strokeStyle=stroke;ctx.stroke()}}
+function line(x,y,X,Y,color,width=1){ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(X,Y);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke()}
+function poly(points,fill,stroke,width=1){ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);for(let i=1;i<points.length;i++)ctx.lineTo(...points[i]);ctx.closePath();ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.lineWidth=width;ctx.strokeStyle=stroke;ctx.stroke()}}
+function text(t,x,y,size,color='#242527',weight='normal',align='center',font='Arial,Helvetica,sans-serif'){ctx.font=`${weight} ${size}px ${font}`;ctx.fillStyle=color;ctx.textAlign=align;ctx.textBaseline='alphabetic';ctx.fillText(String(t),x,y)}
+function circle(x,y,r,fill,stroke,width=1){ctx.beginPath();ctx.arc(x,y,r,0,2*PI);ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.lineWidth=width;ctx.strokeStyle=stroke;ctx.stroke()}}
+function polar(a,r){return[444+Math.sin(a*DEG)*r,412-Math.cos(a*DEG)*r]}
+function relativeBearing(direction){return ((direction-s.heading+540)%360)-180}
+function arcBand(a,b,inner,outer,color){ctx.beginPath();for(let i=0;i<=60;i++){const p=polar(a+(b-a)*i/60,outer);if(!i)ctx.moveTo(...p);else ctx.lineTo(...p)}for(let i=60;i>=0;i--)ctx.lineTo(...polar(a+(b-a)*i/60,inner));ctx.closePath();ctx.fillStyle=color;ctx.fill()}
+function logo(){
+ ctx.save();ctx.fillStyle='#a8a9b6';ctx.strokeStyle='#a8a9b6';ctx.lineWidth=.45;
+ ctx.font='italic 900 43px "Arial Black", Arial, sans-serif';ctx.textAlign='center';ctx.textBaseline='alphabetic';
+ ctx.translate(444,128);ctx.transform(1,0,-.13,1,0,0);ctx.fillText('B&G',0,0,154);ctx.strokeText('B&G',0,0,154);ctx.restore();
+}
+function housing(){
+ const bezel=ctx.createLinearGradient(0,85,0,801);bezel.addColorStop(0,'#3c3d40');bezel.addColorStop(.13,'#18191b');bezel.addColorStop(.87,'#17181a');bezel.addColorStop(1,'#37383b');
+ box(76,85,736,716,2,bezel,'#090a0b',2);
+ box(82,88,724,706,2,'#292a2c','#535458',1);
+ const top=ctx.createLinearGradient(0,85,0,125);top.addColorStop(0,'#494a4f');top.addColorStop(.52,'#34363b');top.addColorStop(1,'#1b1c1f');box(84,86,721,38,1,top,'#191a1c',2);
+ const bottom=ctx.createLinearGradient(0,763,0,801);bottom.addColorStop(0,'#111214');bottom.addColorStop(.28,'#353639');bottom.addColorStop(.78,'#404144');bottom.addColorStop(1,'#222326');box(84,763,721,38,1,bottom,'#111214',2);
+ box(100,125,689,535,1,'#1d1e20','#0e0f11',3);
+ box(108,134,674,522,0,'#f9fafb','#0e0f11',1);
+ logo();
+}
+function rose(){
+ // A imagem original tem um disco escuro com dois aneis e setores de cor.
+ circle(444,412,180,'#59636b');circle(444,412,153,'#f9fafb');circle(444,412,140,'#56616a');circle(444,412,111,'#f9fafb');
+ const sector=Math.max(18,Math.min(85,s.twa+13));
+ arcBand(-sector,0,160,179,'#bd4c52');arcBand(0,sector,160,179,'#81b94f');
+ // Vetores em fatia: vertice no centro, topo curvo sobre o anel interior,
+ // e borda radial tracejada. Os angulos respondem ao TWA e a rosa ao heading.
+ const greenAngle=-Math.max(9,Math.min(70,s.twa*.48));
+ const redAngle=Math.max(12,Math.min(125,s.twa*1.95));
+ function windSlice(angle,halfWidth,fill,edge){
+  const r=112,left=angle-halfWidth,right=angle+halfWidth;
+  ctx.beginPath();ctx.moveTo(444,412);ctx.lineTo(...polar(left,r));
+  ctx.arc(444,412,r,(left-90)*DEG,(right-90)*DEG);
+  ctx.closePath();ctx.fillStyle=fill;ctx.fill();
+  const end=polar(right,r);ctx.beginPath();ctx.moveTo(444,412);ctx.lineTo(...end);
+  ctx.strokeStyle=edge;ctx.lineWidth=6;ctx.setLineDash([34,9]);ctx.lineCap='round';ctx.stroke();
+  ctx.setLineDash([]);ctx.lineCap='butt';
+ }
+ windSlice(greenAngle,8,'rgba(126,194,60,.54)','rgba(91,176,34,.85)');
+ windSlice(redAngle,10,'rgba(211,58,70,.53)','rgba(213,38,52,.91)');
+ // Arcos finos da proa, discretos e sem preencher o interior branco.
+ ctx.beginPath();ctx.moveTo(406,485);ctx.bezierCurveTo(400,407,421,353,443,328);ctx.bezierCurveTo(468,356,485,409,481,484);ctx.strokeStyle='rgba(88,92,91,.65)';ctx.lineWidth=8;ctx.stroke();
+ // O ponto central e a leitura sao redesenhados por cima dos arcos.
+ const labels=[['090',-20],['150',36],['180',71],['210',93],['240',134],['270',160],['300',187],['330',220],['N',246],['030',278],['060',312]];
+ for(const [value,angle] of labels){const a=relativeBearing(value==='N'?0:Number(value)),p=polar(a,127);ctx.save();ctx.translate(...p);ctx.rotate(a*DEG);text(value,0,8,value==='N'?24:21,'#f9fafb','bold');ctx.restore()}
+ for(let absolute=0;absolute<360;absolute+=10){const angle=relativeBearing(absolute),p=polar(angle,168);circle(p[0],p[1],absolute%30===0?3:2.5,'#8a9299')}
+ for(let absolute=0;absolute<360;absolute+=30){const angle=relativeBearing(absolute),p=polar(angle,160),q=polar(angle,177);line(...p,...q,'#f9fafb',absolute%90===0?4.5:3.5)}
+ // Topo com graduacao e indicador de referencia.
+ const top=polar(0,168);line(top[0],top[1]-11,top[0],top[1]+10,'#f9fafb',7);
+ // A base cruza o anel exterior; a ponta toca o segundo anel e aponta para a direcao absoluta.
+ // heading e o rumo do barco; 113 e apenas o valor inicial de demonstracao.
+ const bearing=relativeBearing(s.mode==='TRUE'?s.twd:s.awd),base=polar(bearing,180);
+ ctx.save();ctx.translate(...base);ctx.rotate(bearing*DEG);
+ poly([[-22,-22],[22,-22],[0,36]],'#334779','#27345d',2);
+ ctx.save();ctx.rotate(-bearing*DEG);text(s.mode==='TRUE'?'T':'A',0,3,27,'#fff','bold');ctx.restore();ctx.restore();
+ // Setas alaranjadas no topo e indicador central.
+ poly([[432,252],[456,252],[444,273]],'#e8a42c');poly([[444,308],[454,325],[434,325]],'#e8a42c');
+ box(411,274,66,31,8,'#f9fafb','#353c43',2);text(String(Math.round(s.heading)),444,297,24,'#23272a','normal');
+
+}
+function readings(){
+ // Corner anchors match the SailSteer panel margins after its display transform.
+ const left=134,right=747,topValue=232,topLabel=263,bottomLabel=562,bottomValue=625;
+ text(s.bspd.toFixed(1),left,topValue,67,'#242529','bold','left','Arial Narrow,Arial,sans-serif');text('BSPD',left,topLabel,24,'#5d5e60','bold','left');
+ text(String(Math.round(s.twa)),right,topValue,67,'#242529','bold','right','Arial Narrow,Arial,sans-serif');text('TWA',right,topLabel,24,'#5d5e60','bold','right');
+ text('TWD',left,bottomLabel,24,'#616264','bold','left');text(String(Math.round(s.twd)),left,bottomValue,69,'#242529','bold','left','Arial Narrow,Arial,sans-serif');
+ text('TWS',right,bottomLabel,24,'#616264','bold','right');text(s.tws.toFixed(1),right,bottomValue,66,'#242529','bold','right','Arial Narrow,Arial,sans-serif');
+}
+function controls(){
+ const panel=ctx.createLinearGradient(0,663,0,760);panel.addColorStop(0,'#343538');panel.addColorStop(.5,'#38393c');panel.addColorStop(1,'#303135');box(104,662,680,99,0,panel,'#151618',2);
+ for(const x of [238,375,513,650])line(x,664,x,761,'#252629',3);
+ for(const x of [238,375,513,650])box(x-7,677,14,68,4,'#414246','#111214',2);
+ const buttons=[168,306,444,582,719];for(const x of buttons){circle(x,712,41,'#35363a','#101113',2);circle(x,712,37,'#35363a','#48494c',1)}
+ for(let row=0;row<3;row++)for(let col=0;col<3;col++)box(151+col*13,693+row*13,9,9,0,'#f4f5f7');
+ poly([[296,716],[306,705],[316,716]],'#f4f5f7');
+ line(432,712,453,712,'#f4f5f7',3);line(453,712,453,705,'#f4f5f7',3);poly([[431,712],[439,707],[439,717]],'#f4f5f7');
+ poly([[571,707],[582,719],[593,707]],'#f4f5f7');
+ text('MENU',719,713,20,'#f6f6f7','bold');
+ for(let i=0;i<8;i++){const a=i*PI/4;line(719+Math.cos(a)*5,727+Math.sin(a)*5,719+Math.cos(a)*11,727+Math.sin(a)*11,'#f6f6f7',1.4)}circle(719,727,2,'#f6f6f7');
+}
+
+// Page renderers are isolated from the v7 bezel, keys, and menu tree.
+const pageData={boatSpeed:10.6,depth:10.0,seaTemp:9.1,pilotHeading:252,pilotTarget:234,pilotDeviation:9,rudderAngle:19,pilotMode:'A',pilotState:'HEADING HOLD',speedUnit:'kn',depthUnit:'m'};
+// PGN 128267 depthM remains in metres; only display values change with the unit.
+function depthDisplayValue(){const metres=pageData.depth+dataStatus.depthOffsetM;return pageData.depthUnit==='ft'?metres/0.3048:metres}
+// Canvas reconstructions of the four supplied JPG references. No raster image is used at runtime.
+const canvasReferencePages=Object.freeze({'Steering JPG':1,'TWS JPG':1,'Depth JPG':1,'Weather JPG':1});
+function refStage(draw){
+ pageCanvas();ctx.save();ctx.beginPath();ctx.rect(188,222,511,380);ctx.clip();ctx.translate(191,227);ctx.scale(1.006,1.006);ctx.fillStyle='#fff';ctx.fillRect(0,0,500,370);draw();ctx.restore();
+}
+function refFont(size,weight='700',family='Arial Narrow,Arial,sans-serif'){ctx.font=weight+' '+size+'px '+family;ctx.textBaseline='alphabetic'}
+function refText(t,x,y,size,align='center',color='#050505',weight='700',family){refFont(size,weight,family);ctx.textAlign=align;ctx.fillStyle=color;ctx.fillText(String(t),x,y)}
+function refLine(x1,y1,x2,y2,color='#555',w=1){ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.strokeStyle=color;ctx.lineWidth=w;ctx.stroke()}
+function ringGauge(title,unit,value,max,labels,needleAngle){refStage(()=>{
+ const cx=250,cy=190,ro=224,ri=194,start=205*DEG,end=335*DEG;
+ ctx.lineCap='butt';ctx.beginPath();ctx.arc(cx,cy,ro,start,end);ctx.strokeStyle='#505a63';ctx.lineWidth=31;ctx.stroke();
+ ctx.beginPath();ctx.arc(cx,cy,ro,start,start+23*DEG);ctx.strokeStyle='#ed1830';ctx.lineWidth=25;ctx.stroke();
+ ctx.beginPath();ctx.arc(cx,cy,ro,end-23*DEG,end);ctx.strokeStyle='#ed1830';ctx.lineWidth=25;ctx.stroke();
+ for(let i=0;i<=20;i++){const a=start+(end-start)*i/20,major=i%5===0;const r1=ro-(major?23:9);refLine(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1,cx+Math.cos(a)*(ro+1),cy+Math.sin(a)*(ro+1),'#fff',major?4:2)}
+ labels.forEach((v,i)=>{const a=start+(end-start)*i/(labels.length-1);refText(v,cx+Math.cos(a)*166,cy+Math.sin(a)*166+7,25,'center','#111','400')});
+ refText(title,250,93,38);refText(unit,250,132,30);
+ const a=needleAngle;ctx.beginPath();ctx.moveTo(cx-6,cy+7);ctx.lineTo(cx+Math.cos(a)*188,cy+Math.sin(a)*188);ctx.lineTo(cx+8,cy-5);ctx.closePath();ctx.fillStyle='#344b99';ctx.fill();
+ const parts=Number(value).toFixed(1).split('.');refText(parts[0],246,286,108,'center');refText('.'+parts[1],354,286,67,'center');
+ });}
+function drawCanvasTws(){
+ // Source-faithful 776 x 548 gauge, fitted uniformly inside the 674 x 522 display.
+ // No independent canvas, no stretched aspect ratio; same TWS as the other views.
+ ctx.save();ctx.beginPath();ctx.rect(108,134,674,522);ctx.clip();
+ ctx.fillStyle='#fff';ctx.fillRect(108,134,674,522);
+ const scale=Math.min(674/776,522/548);
+ ctx.translate(108+(674-776*scale)/2,134+(522-548*scale)/2);
+ ctx.scale(scale,scale);
+const C={white:'#ffffff',black:'#000000',rimTop:'#4d5862',rimMid:'#5a6570',rimBottom:'#46515a',red:'#ed1b2f',blue:'#29469c'};
+const fontNarrow='"Arial Narrow","Liberation Sans Narrow","Nimbus Sans Narrow",Arial,sans-serif';
+function pt(cx,cy,r,deg){const a=deg*Math.PI/180;return{x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r}}
+function path(points){ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);for(let i=1;i<points.length;i++)ctx.lineTo(points[i][0],points[i][1]);ctx.closePath()}
+function sector(cx,cy,ro,ri,a0,a1,fill){ctx.beginPath();ctx.arc(cx,cy,ro,a0*Math.PI/180,a1*Math.PI/180);ctx.arc(cx,cy,ri,a1*Math.PI/180,a0*Math.PI/180,true);ctx.closePath();ctx.fillStyle=fill;ctx.fill()}
+function text(value,x,y,size,weight='700',align='center'){
+  ctx.save();ctx.fillStyle=C.black;ctx.textAlign=align;ctx.textBaseline='middle';
+  ctx.font=`${weight} ${size}px ${fontNarrow}`;ctx.fillText(value,x,y);ctx.restore();
+}
+
+
+  ctx.fillStyle=C.white;ctx.fillRect(0,0,776,548);
+  const cx=388,cy=275,ro=359,ri=321;
+
+  // Outer instrument ring, sampled to match the source's slate-grey tone and lower opening.
+  ctx.beginPath();ctx.arc(cx,cy,ro,128*Math.PI/180,412*Math.PI/180);ctx.arc(cx,cy,ri,412*Math.PI/180,128*Math.PI/180,true);ctx.closePath();
+  const rim=ctx.createLinearGradient(0,0,0,548);rim.addColorStop(0,C.rimTop);rim.addColorStop(.5,C.rimMid);rim.addColorStop(1,C.rimBottom);ctx.fillStyle=rim;ctx.fill();
+
+  // Lower red bands. These cover the rim but retain the same radial geometry.
+  sector(cx,cy,ro-1,ri+1,128,151,C.red);
+  sector(cx,cy,ro-1,ri+1,389,412,C.red);
+
+  // Inner white face. The source is not circular: it has a flat top and chamfered lower shoulders.
+  path([[158,52],[595,52],[627,84],[651,123],[671,171],[684,221],[690,273],[688,326],[675,377],[655,424],[594,495],[515,495],[494,523],[281,523],[260,495],[163,495],[111,433],[87,385],[74,334],[69,281],[74,226],[86,178],[106,128],[131,86]]);
+  ctx.fillStyle=C.white;ctx.fill();
+
+
+  // Marks follow the visual positions from 0 to 30; major marks every 5 kn.
+  const scaleStart=111,scaleSpan=318;
+  for(let i=0;i<=30;i++){
+    const angle=scaleStart+scaleSpan*i/30;
+    if(i%5===0){
+      const p1=pt(cx,cy,330,angle),p2=pt(cx,cy,352,angle);
+      ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.strokeStyle='#f8fafb';ctx.lineWidth=7;ctx.lineCap='round';ctx.stroke();
+    }else{
+      const p=pt(cx,cy,344,angle);ctx.beginPath();ctx.arc(p.x,p.y,5.1,0,Math.PI*2);ctx.fillStyle='#fafbfb';ctx.fill();
+      ctx.strokeStyle='rgba(205,211,214,.7)';ctx.lineWidth=.7;ctx.stroke();
+    }
+  }
+
+  // Numerals and central legends measured against the uploaded 776 x 548 reference.
+  text('10',166,100,51,'500'); text('15',379,85,54,'500'); text('20',586,101,51,'500');
+  text('5',90,329,50,'500'); text('25',651,329,50,'500');
+  text('0',268,470,48,'500'); text('30',489,470,48,'500');
+  text('TWS',387,145,58,'700'); text('kn',387,210,55,'700');
+
+  // Dynamic needle. The 0..30 range follows the non-linear-looking visual arc of the reference.
+  const v=Math.max(0,Math.min(30,Number(s.tws)||0));
+  const a=scaleStart+scaleSpan*v/30;
+  const tip=pt(cx,cy,307,a),neckA=pt(cx,cy,22,a-90),neckB=pt(cx,cy,22,a+90),tail=pt(cx,cy,18,a+180);
+  path([[tip.x,tip.y],[neckA.x,neckA.y],[tail.x,tail.y],[neckB.x,neckB.y]]);
+  ctx.fillStyle=C.blue;ctx.fill();
+  ctx.strokeStyle='rgba(28,53,128,.5)';ctx.lineWidth=1;ctx.stroke();
+
+  // Large value. Separate integer and decimal reproduce the source's optical spacing.
+  const parts=v.toFixed(1).split('.');
+  ctx.fillStyle=C.black;ctx.textBaseline='alphabetic';
+  ctx.textAlign='right';ctx.font=`700 145px ${fontNarrow}`;ctx.fillText(parts[0],384,417);
+  ctx.textAlign='left';ctx.font=`700 94px ${fontNarrow}`;ctx.fillText('.'+parts[1],385,417);
+
+ ctx.restore();
+}
+function drawCanvasDepth(){
+ // TWS wheel geometry fitted uniformly to the display; depth data stays in metres internally.
+ // The visible 0..50 scale uses the selected unit (m or ft).
+ ctx.save();ctx.beginPath();ctx.rect(108,134,674,522);ctx.clip();
+ ctx.fillStyle='#fff';ctx.fillRect(108,134,674,522);
+ const scale=Math.min(674/776,522/548);
+ ctx.translate(108+(674-776*scale)/2,134+(522-548*scale)/2);
+ ctx.scale(scale,scale);
+const C={white:'#ffffff',black:'#000000',rimTop:'#4d5862',rimMid:'#5a6570',rimBottom:'#46515a',red:'#ed1b2f',blue:'#29469c'};
+const fontNarrow='"Arial Narrow","Liberation Sans Narrow","Nimbus Sans Narrow",Arial,sans-serif';
+function pt(cx,cy,r,deg){const a=deg*Math.PI/180;return{x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r}}
+function path(points){ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);for(let i=1;i<points.length;i++)ctx.lineTo(points[i][0],points[i][1]);ctx.closePath()}
+function sector(cx,cy,ro,ri,a0,a1,fill){ctx.beginPath();ctx.arc(cx,cy,ro,a0*Math.PI/180,a1*Math.PI/180);ctx.arc(cx,cy,ri,a1*Math.PI/180,a0*Math.PI/180,true);ctx.closePath();ctx.fillStyle=fill;ctx.fill()}
+function text(value,x,y,size,weight='700',align='center'){
+  ctx.save();ctx.fillStyle=C.black;ctx.textAlign=align;ctx.textBaseline='middle';
+  ctx.font=`${weight} ${size}px ${fontNarrow}`;ctx.fillText(value,x,y);ctx.restore();
+}
+
+
+  ctx.fillStyle=C.white;ctx.fillRect(0,0,776,548);
+  const cx=388,cy=275,ro=359,ri=321;
+
+  // Outer instrument ring, sampled to match the source's slate-grey tone and lower opening.
+  ctx.beginPath();ctx.arc(cx,cy,ro,128*Math.PI/180,412*Math.PI/180);ctx.arc(cx,cy,ri,412*Math.PI/180,128*Math.PI/180,true);ctx.closePath();
+  const rim=ctx.createLinearGradient(0,0,0,548);rim.addColorStop(0,C.rimTop);rim.addColorStop(.5,C.rimMid);rim.addColorStop(1,C.rimBottom);ctx.fillStyle=rim;ctx.fill();
+
+  // Lower red bands. These cover the rim but retain the same radial geometry.
+  sector(cx,cy,ro-1,ri+1,128,151,C.red);
+  sector(cx,cy,ro-1,ri+1,389,412,C.red);
+
+  // Inner white face. The source is not circular: it has a flat top and chamfered lower shoulders.
+  path([[158,52],[595,52],[627,84],[651,123],[671,171],[684,221],[690,273],[688,326],[675,377],[655,424],[594,495],[515,495],[494,523],[281,523],[260,495],[163,495],[111,433],[87,385],[74,334],[69,281],[74,226],[86,178],[106,128],[131,86]]);
+  ctx.fillStyle=C.white;ctx.fill();
+
+
+  // Marks follow the visual positions from 0 to 30; major marks every 5 kn.
+  const scaleStart=111,scaleSpan=318;
+  for(let i=0;i<=50;i++){
+    const angle=scaleStart+scaleSpan*i/50;
+    if(i%10===0){
+      const p1=pt(cx,cy,330,angle),p2=pt(cx,cy,352,angle);
+      ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.strokeStyle='#f8fafb';ctx.lineWidth=7;ctx.lineCap='round';ctx.stroke();
+    }else if(i%2===0){
+      const p=pt(cx,cy,344,angle);ctx.beginPath();ctx.arc(p.x,p.y,5.1,0,Math.PI*2);ctx.fillStyle='#fafbfb';ctx.fill();
+      ctx.strokeStyle='rgba(205,211,214,.7)';ctx.lineWidth=.7;ctx.stroke();
+    }
+  }
+
+  // Six evenly spaced depth graduations: 0, 10, 20, 30, 40, 50.
+  for(let value=0;value<=50;value+=10){
+    const pos=pt(cx,cy,245,scaleStart+scaleSpan*value/50);
+    text(String(value),pos.x,pos.y,49,'500');
+  }
+  text('DEPTH',387,145,58,'700');text(pageData.depthUnit,387,210,55,'700');
+
+  // Clamp only the needle; keep the true converted reading visible above 50.
+  const rawDepth=depthDisplayValue();
+  const v=Math.max(0,Math.min(50,rawDepth));
+  const a=scaleStart+scaleSpan*v/50;
+  const tip=pt(cx,cy,307,a),neckA=pt(cx,cy,22,a-90),neckB=pt(cx,cy,22,a+90),tail=pt(cx,cy,18,a+180);
+  path([[tip.x,tip.y],[neckA.x,neckA.y],[tail.x,tail.y],[neckB.x,neckB.y]]);
+  ctx.fillStyle=C.blue;ctx.fill();
+  ctx.strokeStyle='rgba(28,53,128,.5)';ctx.lineWidth=1;ctx.stroke();
+
+  // Large value. Separate integer and decimal reproduce the source's optical spacing.
+  const parts=rawDepth.toFixed(1).split('.');
+  ctx.fillStyle=C.black;ctx.textBaseline='alphabetic';
+  ctx.textAlign='right';ctx.font=`700 ${rawDepth>=100?110:145}px ${fontNarrow}`;ctx.fillText(parts[0],384,417);
+  ctx.textAlign='left';ctx.font=`700 ${rawDepth>=100?75:94}px ${fontNarrow}`;ctx.fillText('.'+parts[1],385,417);
+  if(rawDepth>50)text('OVER RANGE',388,500,20,'700');
+
+ ctx.restore();
+}
+function drawCanvasWeather(){refStage(()=>{
+ refText('BAROMETER',250,31,25);refText(demoValues.pressure.toFixed(1)+' mb',486,31,23,'right');
+ const x=53,y=39,w=432,h=184,min=990,max=1020,vals=history.pressure;
+ for(let i=0;i<4;i++){const gy=y+i*h/3;refLine(x,gy,x+w,gy,'#667078',1.4);refText(1020-i*10,x-8,gy+7,18,'right','#111','400')}
+ for(let i=0;i<=3;i++){const gx=x+i*w/3;refLine(gx,y,gx,y+h,'#667078',1.4);refText(3-i,gx,y+h+23,17,'center','#111','400')}
+ const pts=vals.map((v,i)=>[x+i*w/Math.max(1,vals.length-1),y+h-(v-min)/(max-min)*h]);ctx.beginPath();ctx.moveTo(x,y+h);pts.forEach(q=>ctx.lineTo(q[0],q[1]));ctx.lineTo(x+w,y+h);ctx.closePath();ctx.fillStyle='rgba(60,43,239,.86)';ctx.fill();ctx.beginPath();pts.forEach((q,i)=>i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]));ctx.strokeStyle='#2521d8';ctx.lineWidth=5;ctx.lineJoin='round';ctx.stroke();
+ refLine(0,249,500,249,'#aaa');refLine(168,249,168,370,'#bbb');refLine(336,249,336,370,'#bbb');
+ refText('AIR TEMP',8,280,19,'left');refText('°C',159,280,18,'right');refText('TWD',177,280,19,'left');refText('°M',328,280,18,'right');refText('TWS',345,280,19,'left');refText('kn',493,280,18,'right');
+ refText(Math.floor(demoValues.airTemp),18,360,80,'left');refText('.'+demoValues.airTemp.toFixed(1).split('.')[1],112,360,48,'left');refText(String(Math.round(s.twd)).padStart(3,'0'),177,360,79,'left');refText(Math.floor(s.tws),345,360,80,'left');refText('.'+s.tws.toFixed(1).split('.')[1],416,360,48,'left');
+ });}
+function drawCanvasSteering(){refStage(()=>{
+ const cx=250,cy=171,r=247;ctx.beginPath();ctx.arc(cx,cy,r,200*DEG,340*DEG);ctx.strokeStyle='#82be49';ctx.lineWidth=3;ctx.stroke();ctx.beginPath();ctx.arc(cx,cy,r-13,201*DEG,339*DEG);ctx.strokeStyle='#050505';ctx.lineWidth=20;ctx.stroke();ctx.beginPath();ctx.arc(cx,cy,r-13,246*DEG,270*DEG);ctx.strokeStyle='#d20c1d';ctx.lineWidth=20;ctx.stroke();
+ for(let d=-60;d<=60;d+=10){const a=(270+d)*DEG,major=d%30===0;refLine(cx+Math.cos(a)*(r-25),cy+Math.sin(a)*(r-25),cx+Math.cos(a)*(r-5),cy+Math.sin(a)*(r-5),'#fff',major?4:2)}
+ ctx.fillStyle='#080808';ctx.fillRect(218,1,64,30);refText(String(Math.round(s.heading)).padStart(3,'0'),250,25,23,'center','#fff');refText(String(Math.round(demoValues.course)).padStart(3,'0'),250,51,22);refText(String(norm(Math.round(s.heading/30)*30-30)).padStart(3,'0'),72,108,21);refText(String(norm(Math.round(s.heading/30)*30+30)).padStart(3,'0'),426,108,21);
+ ctx.beginPath();ctx.moveTo(117,69);ctx.lineTo(145,101);ctx.lineTo(103,107);ctx.closePath();ctx.fillStyle='#3124dc';ctx.fill();
+ refLine(0,119,500,119,'#ccc');refText('WPT BRG',8,150,21,'left','#333');refText('°T',157,150,18,'right','#333','400');refText('XTE',171,150,20,'left','#333');refText('COG',345,150,20,'left','#333');refText('°T',491,150,18,'right','#333','400');refLine(164,121,164,218,'#bbb');refLine(336,121,336,218,'#bbb');
+ refText(String(Math.round(demoValues.waypointBearing)).padStart(3,'0'),7,213,78,'left');refText(Math.abs(demoValues.xte).toFixed(2)+(demoValues.xte<0?'R':'L'),250,205,55);refText(String(Math.round(demoValues.course)).padStart(3,'0'),493,213,78,'right');
+ refLine(0,223,500,223,'#bbb');ctx.fillStyle='#777';ctx.fillRect(109,229,282,141);refLine(250,229,250,370,'#ed1628',6);ctx.setLineDash([7,5]);refLine(268,229,268,370,'#222',2);ctx.setLineDash([]);/* Heading line extends forward from the boat's bow; track and XTE lines stay unchanged. */refLine(267,273,267,230,'#31c5f4',3);drawHighwayBoat(267,274,.68,.85);refText(Math.abs(demoValues.xte).toFixed(2),24,278,24);refText('NM',25,311,24);refText(Math.abs(demoValues.xte).toFixed(2),475,278,24,'right');refText('NM',475,311,24,'right');
+ });}
+function drawCanvasReference(name){if(name==='Steering JPG')drawCanvasSteering();else if(name==='TWS JPG')drawCanvasTws();else if(name==='Depth JPG')drawCanvasDepth();else if(name==='Weather JPG')drawCanvasWeather();else return false;return true;}
+
+function pageText(value,x,y,size,color='#292a2d',weight='bold',align='left',maxWidth){ctx.font=`${weight} ${size}px Arial, sans-serif`;ctx.fillStyle=color;ctx.textAlign=align;ctx.textBaseline='alphabetic';ctx.fillText(String(value),x,y,maxWidth)}
+function pageCanvas(){box(185,219,517,386,0,'#f9fafb',null,0)}
+function drawNumericView(){
+ pageCanvas();
+ pageText('BOAT SPD',199,265,33,'#4d4f51','bold');pageText(pageData.speedUnit,689,265,32,'#55575a','bold','right');
+ const speed=pageData.boatSpeed.toFixed(1).split('.');
+ pageText(speed[0],450,481,244,'#242426','bold','center',300);
+ pageText('.'+speed[1],633,481,127,'#242426','bold','right',156);
+ box(202,370,44,18,0,'#334c93');line(201,390,250,390,'#262728',2);
+ line(201,496,686,496,'#c4c5c5',1);
+ line(424,505,424,601,'#d0d1d1',1);line(559,505,559,601,'#d0d1d1',1);
+ pageText('DEPTH',201,533,22,'#5c5d60');pageText(pageData.depthUnit,413,533,19,'#626466','normal','right');
+ pageText('SEA TEMP',433,533,19,'#5c5d60');pageText('°C',550,533,19,'#626466','normal','right');
+ pageText('TWS',568,533,19,'#5c5d60');pageText(pageData.speedUnit,692,533,19,'#626466','normal','right');
+ pageText(depthDisplayValue().toFixed(1),207,594,71,'#252527','bold','left',215);
+ pageText(pageData.seaTemp.toFixed(1),433,594,61,'#252527','bold','left',121);
+ pageText(s.tws.toFixed(1),567,594,63,'#252527','bold','left',123);
+}
+function autopilotModeBadge(label,code){
+ const x=7,y=168,w=142,center=x+w/2;
+ dr(x,y,w,144,'#3bab5c');dr(x+6,y+45,w-12,92,'#2e7d48');
+ const lines=label==='NON FOLLOW UP'?['NON FOLLOW','UP']:
+  label==='HEADING HOLD'?['HEADING','HOLD']:label==='NO DRIFT'?['NO','DRIFT']:[label];
+ if(lines.length===2){dt(lines[0],center,y+22,14,'#fff','center');dt(lines[1],center,y+39,14,'#fff','center')}
+ else dt(lines[0],center,y+31,14,'#fff','center');
+ dt(code,center,y+122,code==='NFU'?58:81,'#fff','center','normal');
+}
+// v13.9: Wind Mode canvas view; display-only, no NMEA or autopilot output.
+const windView={setAngleDeg:34,reference:'Auto'};
+function windReference(){return windView.reference==='Auto'?(Math.abs(Number(n2k.pgn130306.trueWindAngleDeg))<70?'Apparent':'True'):windView.reference}
+function windAngle(){return windReference()==='True'?Number(n2k.pgn130306.trueWindAngleDeg):Number(n2k.pgn130306.apparentWindAngleDeg)}
+function windArrow(x,y,angle){
+ const sign=Math.sign(angle),color=sign<0?'#e23843':sign>0?'#39ad61':'#92999c';
+ ctx.save();ctx.translate(x,y);
+ poly(sign<0?[[0,0],[26,-17],[26,17]]:sign>0?[[26,0],[0,-17],[0,17]]:[[13,-16],[0,12],[26,12]],color);
+ ctx.restore();
+}
+function drawWindMode(){
+ pageCanvas();ctx.save();ctx.beginPath();ctx.rect(185,219,517,386);ctx.clip();
+ ctx.translate(192,226);ctx.scale(1.006,1.006);dr(0,0,500,370,'#fff');
+ const valid=dataStatus.valid.wind&&Number.isFinite(windAngle());
+ const actual=valid?windAngle():0,target=windView.setAngleDeg,center=norm(Math.round(s.heading/30)*30);
+ drawAutopilotSemicircle({current:s.heading,centerLabel:String(center).padStart(3,'0'),
+  leftLabel:String(norm(center-30)).padStart(3,'0'),rightLabel:String(norm(center+30)).padStart(3,'0'),
+  showCourseMarker:valid,selectedDelta:valid?actual:null});
+ dr(3,5,38,29,'#f7f7f7');ctx.strokeStyle='#777';ctx.strokeRect(3,5,38,29);
+ dt('HI',22,27,17,'#353535','center');dr(41,5,29,29,'#737b86');dt('M',55,27,17,'#fff','center');
+ autopilotModeBadge('WIND','W');
+ dt(windReference()==='True'?'TWA':'AWA',197,159,23,'#686868','left','normal');
+ if(valid)windArrow(194,186,actual);
+ dt(valid?String(Math.abs(Math.round(actual))).padStart(2,'0'):'--',365,228,108,'#030303','center');
+ if(valid)dt('°',477,183,22,'#555','right','normal');
+ dt('SET ANGLE',195,249,23,'#686868','left','normal');
+ windArrow(194,292,target);
+ dt(String(Math.abs(Math.round(target))).padStart(2,'0'),365,334,108,'#030303','center');
+ dt('°',477,289,22,'#555','right','normal');
+ modeNfuRudderIndicator(pageData.rudderAngle);
+ if(!valid){dr(174,343,310,23,'#fff');dt('WIND DATA UNAVAILABLE',188,361,16,'#a00000','left');}
+ ctx.restore();
+}
+function drawPilotView(){
+ pageCanvas();ctx.save();ctx.beginPath();ctx.rect(185,219,517,386);ctx.clip();
+ // Reference coordinates are normalized to the original 500 x 370 display image.
+ ctx.translate(192,226);ctx.scale(1.006,1.006);dr(0,0,500,370,'#fff');
+ const compassCenter=norm(Math.round(s.heading/30)*30);
+ const targetDelta=relative(Number(pageData.pilotTarget)-Number(s.heading));
+ drawAutopilotSemicircle({current:pageData.pilotTarget,centerLabel:String(compassCenter).padStart(3,'0'),
+  leftLabel:String(norm(compassCenter-30)).padStart(3,'0'),
+  rightLabel:String(norm(compassCenter+30)).padStart(3,'0'),
+  showCourseMarker:true,selectedDelta:targetDelta});
+ // Top status selectors HI and magnetic M.
+ dr(3,5,38,29,'#f7f7f7');ctx.strokeStyle='#777';ctx.strokeRect(3,5,38,29);dt('HI',22,27,17,'#353535','center');
+ dr(41,5,29,29,'#737b86');dt('M',55,27,17,'#fff','center');
+ dt('Set Heading',260,148,25,'#666','center','normal');
+ // Two-tone heading-hold badge.
+ autopilotModeBadge('HEADING HOLD','A');
+ // Large commanded heading. Keep value/state dynamic while matching the supplied reference defaults.
+ const heading=String(Math.round(pageData.pilotTarget)).padStart(3,'0');
+ dt(heading,322,304,133,'#020202','center');dt('°M',485,198,23,'#555','right','normal');
+ // Progressive rudder bar, red to port and green to starboard.
+ const rudder=Math.max(-45,Math.min(45,Number(pageData.rudderAngle)||0));
+ dl(70,355,423,355,'#aab0ae',3);
+ if(rudder<0){const extent=-rudder/45*135;dr(205-extent,351,extent,8,'#e23843')}
+ else if(rudder>0){const extent=rudder/45*144;dr(279,351,extent,8,'#36a75d')}
+ dr(213,334,60,32,'#050608');dt(String(Math.abs(Math.round(rudder))).padStart(2,'0'),243,359,21,'#fff','center');
+ ctx.restore();
+ // Visual reference only: no actuator, NMEA output, or autopilot command.
+}
+// Recreated page-by-page from the supplied visual references. No image assets.
+// These are display-only demo readings, not sensor or actuator values.
+const demoViews=Object.freeze({
+ 'Highway':'highway','Tide':'tide','Weather':'weather','Depth history':'depthHistory',
+ 'Basic Wind angle & Speed':'windNumbers','Basic Speed & Depth':'speedDepth',
+ 'Wind plot':'windHistory','GPS':'gpsPosition','SailSteer':'sailSteer',
+ 'Steering':'steering','SOG':'sog','SOG / COG':'sogCog','Depth gauge':'depthGauge',
+ 'TWS gauge':'twsGauge','AUTO mode (Heading hold)':'auto','Autopilot reference':'pilotRef',
+ 'Standby mode':'standby','Non-Follow Up (NFU)':'nfu','No Drift mode':'noDrift'
+});
+const referencePageMap=demoViews; // Preserve menu and isReference API semantics.
+const demoValues={heading:275,target:275,standbyHeading:318,course:359,rudder:-1,
+ speed:6.0,boatSpeed:4.4,depth:31.5,tws:7.8,pressure:1006.6,
+ airTemp:21.0,windDirection:276,windAngle:38,tideSpeed:0.7,tideDirection:38,
+ waypointBearing:329,waypointDistance:0.19,xte:3.6};
+// Shared, simulated NMEA 2000 PGN field model. No CAN connection or actuator output.
+const n2k={pgn127250:{headingDeg:113},pgn127245:{rudderDeg:1},
+ pgn128259:{speedWaterKn:11.2},pgn128267:{depthM:10},
+ pgn129025:{latitudeDeg:38.7223,longitudeDeg:-9.1393},
+ pgn129026:{cogDeg:113,sogKn:11.0},pgn129283:{xteNm:0.05},
+ pgn129284:{bearingToWaypointDeg:125,distanceToWaypointNm:0.19},
+ pgn130306:{trueWindSpeedKn:8.9,trueWindAngleDeg:38,trueWindDirectionDeg:151,apparentWindAngleDeg:32},
+ pgn130314:{pressureMb:1006.6},pgn130316:{seaTemperatureC:19.1,airTemperatureC:21},
+ pgn130577:{currentSpeedKn:0.7,currentDirectionDeg:38},
+ sim:{pilotTargetDeg:113}};
+// v14.1: canonical PGN store; validated eight-page selection and protected-page library access. Existing s/pageData/demoValues fields are linked views,
+// not independent measurements. Metadata is simulation-only and never sends NMEA traffic.
+const dataStatus={source:'SIMULATION',valid:{wind:true,depth:true,heading:true,tide:true,waypoint:true},
+ depthReference:'Transducer',depthOffsetM:0,headingReference:'Magnetic',h5000:true};
+function measurement(group,field,unit){if(!Object.hasOwn(n2k,group)||!Object.hasOwn(n2k[group],field))throw new RangeError('Unknown measurement');return Object.freeze({value:n2k[group][field],unit,
+ source:dataStatus.source,valid:dataStatus.valid[group==='pgn130306'?'wind':group==='pgn128267'?'depth':group==='pgn127250'?'heading':group==='pgn130577'?'tide':group==='pgn129284'?'waypoint':'heading']!==false})}
+const history={sog:[],pressure:[],depth:[],twd:[],tws:[]};
+const norm=v=>(v%360+360)%360,relative=v=>((v+540)%360)-180;
+function link(obj,key,group,field){Object.defineProperty(obj,key,{enumerable:true,
+ get:()=>n2k[group][field],set:v=>{n2k[group][field]=v}})}
+for(const [obj,key,group,field] of [
+ [s,'heading','pgn127250','headingDeg'],[s,'bspd','pgn128259','speedWaterKn'],
+ [s,'tws','pgn130306','trueWindSpeedKn'],[s,'twa','pgn130306','trueWindAngleDeg'],
+ [s,'twd','pgn130306','trueWindDirectionDeg'],
+ [pageData,'boatSpeed','pgn128259','speedWaterKn'],[pageData,'depth','pgn128267','depthM'],
+ [pageData,'seaTemp','pgn130316','seaTemperatureC'],[pageData,'pilotHeading','pgn127250','headingDeg'],
+ [pageData,'pilotTarget','sim','pilotTargetDeg'],[pageData,'rudderAngle','pgn127245','rudderDeg'],
+ [demoValues,'heading','pgn127250','headingDeg'],[demoValues,'standbyHeading','pgn127250','headingDeg'],
+ [demoValues,'course','pgn129026','cogDeg'],[demoValues,'rudder','pgn127245','rudderDeg'],
+ [demoValues,'speed','pgn129026','sogKn'],[demoValues,'boatSpeed','pgn128259','speedWaterKn'],
+ [demoValues,'depth','pgn128267','depthM'],[demoValues,'tws','pgn130306','trueWindSpeedKn'],
+ [demoValues,'pressure','pgn130314','pressureMb'],[demoValues,'airTemp','pgn130316','airTemperatureC'],
+ [demoValues,'windDirection','pgn130306','trueWindDirectionDeg'],
+ [demoValues,'windAngle','pgn130306','trueWindAngleDeg'],
+ [demoValues,'tideSpeed','pgn130577','currentSpeedKn'],[demoValues,'tideDirection','pgn130577','currentDirectionDeg'],
+ [demoValues,'waypointBearing','pgn129284','bearingToWaypointDeg'],
+ [demoValues,'waypointDistance','pgn129284','distanceToWaypointNm'],[demoValues,'xte','pgn129283','xteNm']])link(obj,key,group,field);
+Object.defineProperty(s,'awd',{enumerable:true,
+ get:()=>norm(s.heading+n2k.pgn130306.apparentWindAngleDeg),
+ set:v=>{n2k.pgn130306.apparentWindAngleDeg=relative(v-s.heading)}});
+function sample(){for(const [key,value] of Object.entries({sog:demoValues.speed,pressure:demoValues.pressure,
+ depth:demoValues.depth,twd:s.twd,tws:s.tws})){history[key].push(value);if(history[key].length>48)history[key].shift()}}
+sample();let demoRunning=true,demoTick=0;
+function tickDemo(){if(!demoRunning)return;const t=++demoTick;
+ n2k.pgn127250.headingDeg=norm(113+Math.round(4*Math.sin(t/17)));
+ n2k.pgn129026.cogDeg=norm(s.heading+Math.round(2*Math.sin(t/12)));
+ n2k.pgn128259.speedWaterKn=+(11.2+.5*Math.sin(t/8)).toFixed(1);
+ n2k.pgn129026.sogKn=+(s.bspd+.2*Math.sin(t/6)).toFixed(1);
+ n2k.pgn128267.depthM=+(10+.6*Math.sin(t/11)).toFixed(1);
+ n2k.pgn130306.trueWindSpeedKn=+(8.9+.7*Math.sin(t/9)).toFixed(1);
+ n2k.pgn130306.trueWindAngleDeg=Math.round(38+3*Math.sin(t/14));
+ n2k.pgn130306.trueWindDirectionDeg=norm(s.heading+s.twa);
+ n2k.pgn130306.apparentWindAngleDeg=Math.round(32+3*Math.sin(t/14));
+ n2k.pgn130314.pressureMb=+(1006.6+1.2*Math.sin(t/35)).toFixed(1);
+ n2k.pgn130316.seaTemperatureC=+(19.1+.2*Math.sin(t/28)).toFixed(1);
+ n2k.pgn130316.airTemperatureC=+(21+.4*Math.sin(t/30)).toFixed(1);
+ n2k.pgn127245.rudderDeg=Math.round(3*Math.sin(t/7));
+ n2k.pgn129283.xteNm=+(0.05+.02*Math.sin(t/15)).toFixed(2);
+ n2k.pgn129284.distanceToWaypointNm=+(Math.max(.01,.19-.001*(t%180))).toFixed(2);
+ n2k.pgn130577.currentSpeedKn=+(.7+.1*Math.sin(t/21)).toFixed(1);
+ n2k.pgn130577.currentDirectionDeg=norm(38+Math.round(3*Math.sin(t/20)));
+ n2k.pgn129284.bearingToWaypointDeg=norm(125+Math.round(3*Math.sin(t/25)));
+ n2k.pgn129025.latitudeDeg=+(38.7223+.0001*Math.sin(t/45)).toFixed(6);
+ n2k.pgn129025.longitudeDeg=+(-9.1393+.0001*Math.cos(t/45)).toFixed(6);
+ sample();render()}
+setInterval(tickDemo,1000);
+function snapshot(){return Object.fromEntries(Object.entries(n2k).map(([k,v])=>[k,{...v}]))}
+function setDemoValues(patch){if(!patch||typeof patch!=='object'||Array.isArray(patch))throw new TypeError('PGN patch required');
+ const changes=[];for(const [pgn,fields] of Object.entries(patch)){
+ if(!Object.hasOwn(n2k,pgn)||!fields||typeof fields!=='object'||Array.isArray(fields))throw new RangeError('Unknown PGN '+pgn);
+ for(const [field,value] of Object.entries(fields)){
+ if(!Object.hasOwn(n2k[pgn],field)||!Number.isFinite(value))throw new RangeError('Invalid PGN field '+pgn+'.'+field);
+ const bounds=field.endsWith('Deg')?(field==='latitudeDeg'?[-90,90]:field==='longitudeDeg'?[-180,180]:field==='rudderDeg'?[-45,45]:field.includes('Angle')?[-180,180]:[0,359]):field==='pressureMb'?[800,1200]:field.endsWith('TemperatureC')?[-40,80]:[0,9999];
+ if(value<bounds[0]||value>bounds[1])throw new RangeError('Out of range '+pgn+'.'+field);
+ changes.push([pgn,field,value])}}
+ changes.forEach(([pgn,field,value])=>{n2k[pgn][field]=value});
+ if(patch.pgn130306?.trueWindAngleDeg!==undefined&&patch.pgn130306?.trueWindDirectionDeg===undefined)s.twd=norm(s.heading+s.twa);
+ if(patch.pgn130306?.trueWindDirectionDeg!==undefined&&patch.pgn130306?.trueWindAngleDeg===undefined)s.twa=relative(s.twd-s.heading);
+ demoRunning=false;sample();render();return snapshot()}
+function coordinate(deg,lat){const hemi=lat?(deg>=0?'N':'S'):(deg>=0?'E':'W'),a=Math.abs(deg),whole=Math.floor(a);
+ return hemi+' '+String(whole).padStart(lat?2:3,'0')+'°'+((a-whole)*60).toFixed(3).padStart(6,'0')+"'"}
+function clock(){return new Date().toLocaleTimeString('pt-PT',{hour12:false})}
+function dr(x,y,w,h,color){ctx.fillStyle=color;ctx.fillRect(x,y,w,h)}
+function dl(x,y,X,Y,color='#555b61',width=1){ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(X,Y);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke()}
+function dt(value,x,y,size=24,color='#101113',align='left',weight='bold'){
+ ctx.fillStyle=color;ctx.font=weight+' '+size+'px Arial,sans-serif';ctx.textAlign=align;
+ ctx.textBaseline='alphabetic';ctx.fillText(String(value),x,y);
+}
+function poly(points,fill,stroke,width=1){ctx.beginPath();points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();if(fill){ctx.fillStyle=fill;ctx.fill()}if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=width;ctx.stroke()}}
+function arc(cx,cy,r,a,b,color,width=3){ctx.beginPath();ctx.arc(cx,cy,r,a,b);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke()}
+function circ(x,y,r,color){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill()}
+function gauge(title,unit,value,max){
+ const cx=250,cy=223,r=209;arc(cx,cy,r,Math.PI*.85,Math.PI*2.15,'#48535d',29);
+ arc(cx,cy,r,Math.PI*.85,Math.PI*.96,'#e52639',22);arc(cx,cy,r,Math.PI*2.03,Math.PI*2.15,'#e52639',22);
+ for(let i=0;i<=20;i++){let a=Math.PI*(.85+i*1.30/20),rr=i%5===0?22:11;
+ dl(cx+Math.cos(a)*(r-rr),cy+Math.sin(a)*(r-rr),cx+Math.cos(a)*r,cy+Math.sin(a)*r,'#fff',i%5===0?3:2)}
+ for(let i=0;i<=5;i++){let a=Math.PI*(.85+i*1.30/5);dt(Math.round(i*max/5),cx+Math.cos(a)*166,cy+Math.sin(a)*166,20,'#151515','center','normal')}
+ dt(title,250,105,37,'#080808','center');dt(unit,250,142,28,'#101010','center');
+ const a=Math.PI*(.85+Math.max(0,Math.min(max,value))/max*1.30);
+ poly([[cx-4,cy-6],[cx+Math.cos(a)*185,cy+Math.sin(a)*185],[cx+6,cy+6]],'#354f9b');
+ dt(Number(value).toFixed(1),250,289,105,'#070707','center');
+}
+function plot(title,unit,values,min,max,withFooter=false){
+ const x=58,y=57,w=424,h=withFooter?180:269;
+ dt(title,250,42,26,'#1a1a1a','center');dt(values.at(-1).toFixed(1)+' '+unit,480,42,22,'#111','right');
+ for(let i=0;i<=4;i++){const gy=y+i*h/4;dl(x,gy,x+w,gy,'#89919a',1);dt((max===8&&min===0?String(max-(max-min)*i/4):(max-(max-min)*i/4).toFixed(max>100?0:1)),x-7,gy+5,13,'#34383d','right')}
+ for(let i=0;i<=5;i++){const gx=x+i*w/5;dl(gx,y,gx,y+h,'#9ba3aa',1);dt(5-i,gx,y+h+19,13,'#32383b','center')}
+ const pts=values.map((v,i)=>[x+i*w/Math.max(1,values.length-1),y+h-(v-min)/(max-min)*h]);
+ poly([[x,y+h],...pts,[x+w,y+h]],'rgba(48,45,229,.79)');
+ ctx.beginPath();pts.forEach(([a,b],i)=>i?ctx.lineTo(a,b):ctx.moveTo(a,b));ctx.strokeStyle='#2525d7';ctx.lineWidth=3;ctx.stroke();
+ if(withFooter){dl(58,286,482,286,'#bbb');dl(200,288,200,365,'#bbb');dl(348,288,348,365,'#bbb');
+ dt('AIR TEMP °C',65,310,17);dt(demoValues.airTemp.toFixed(1),65,361,47);
+ dt('TWD °M',209,310,17);dt(demoValues.windDirection,209,361,47);
+ dt('TWS kn',355,310,17);dt(demoValues.tws.toFixed(1),355,361,47)}
+ 
+}
+// Single source of truth for geometry, graduations and selected heading.
+// Positive deviation = starboard (right, green); negative = port (left, red).
+function drawAutopilotSemicircle({current,centerLabel,leftLabel,rightLabel,showCourseMarker=false,selectedDelta=null}){
+ const cx=250,cy=278,rOuter=270,rBand=255,top=1.5*Math.PI;
+ arc(cx,cy,rOuter,1.17*Math.PI,1.83*Math.PI,'#8fc64a',3);
+ arc(cx,cy,rBand,1.17*Math.PI,1.83*Math.PI,'#050505',18);
+ const delta=Number(selectedDelta);
+ const signed=selectedDelta===null||!Number.isFinite(delta)?0:Math.max(-58,Math.min(58,delta));
+ if(Math.abs(signed)>.05){
+  const target=top+signed*DEG;
+  arc(cx,cy,rBand,Math.min(top,target),Math.max(top,target),signed>0?'#36ad61':'#e23843',18);
+ }
+ for(let i=0;i<=6;i++){
+  const a=Math.PI*(1.19+i*.62/6);
+  dl(cx+Math.cos(a)*246,cy+Math.sin(a)*246,cx+Math.cos(a)*265,cy+Math.sin(a)*265,'#fff',2);
+ }
+ dr(217,5,67,32,'#050608');dt(String(Math.round(current)).padStart(3,'0'),250,30,23,'#fff','center');
+ dt(centerLabel,250,82,20,'#111','center');
+ dt(leftLabel,94,139,20,'#111','center');
+ dt(rightLabel,406,139,20,'#111','center');
+ if(showCourseMarker&&Math.abs(signed)>.05){
+  // Radial marker inside the original, unchanged wheel: tip faces the rim.
+  const a=top+signed*DEG,ux=Math.cos(a),uy=Math.sin(a),tx=-uy,ty=ux;
+  const tipR=243,baseR=215,halfWidth=11;
+  const tip=[cx+ux*tipR,cy+uy*tipR],base=[cx+ux*baseR,cy+uy*baseR];
+  poly([tip,[base[0]+tx*halfWidth,base[1]+ty*halfWidth],
+    [base[0]-tx*halfWidth,base[1]-ty*halfWidth]],signed>0?'#36ad61':'#e23843');
+ }
+}
+function modeBadge(label,code){autopilotModeBadge(label,code)}
+function modeBottomIndicator(value,greenOffset=false){
+ dl(73,349,218,349,'#93c74a',3);dl(282,349,429,349,'#93c74a',3);
+ dr(220,333,62,31,'#050608');dt(String(Math.abs(value)).padStart(2,'0'),251,357,20,'#fff','center');
+ if(greenOffset)dr(286,337,5,11,'#42b865');else dr(216,337,4,8,'#e23843');
+}
+function modeNfuRudderIndicator(value){
+ const angle=Math.max(-45,Math.min(45,Number(value)||0)),extent=Math.abs(angle)/45*143;
+ dl(73,349,429,349,'#aab0ae',3);
+ if(angle<0)dr(216-extent,345,extent,8,'#e23843');
+ else if(angle>0)dr(284,345,extent,8,'#36a75d');
+ dr(220,333,62,31,'#050608');dt(String(Math.abs(Math.round(angle))).padStart(2,'0'),251,357,20,'#fff','center');
+}
+function drawNfuReference(){
+ const center=norm(Math.round(s.heading/30)*30);
+ drawAutopilotSemicircle({current:s.heading,centerLabel:String(center).padStart(3,'0'),
+  leftLabel:String(norm(center-30)).padStart(3,'0'),rightLabel:String(norm(center+30)).padStart(3,'0'),
+  showCourseMarker:true,selectedDelta:demoValues.rudder});
+ dr(5,5,67,28,'#707070');dt('Low',39,25,15,'#fff','center');
+ modeBadge('NON FOLLOW UP','NFU');
+ dt('Rudder Angle',268,138,23,'#686868','center','normal');
+ dt(String(demoValues.rudder),328,277,120,'#030303','center');dt('°',477,173,22,'#555','right','normal');
+ modeNfuRudderIndicator(demoValues.rudder);
+}
+function drawNoDriftReference(){
+ const center=norm(Math.round(demoValues.course/30)*30);
+ drawAutopilotSemicircle({current:demoValues.course,centerLabel:String(center).padStart(3,'0'),
+  leftLabel:String(norm(center-30)).padStart(3,'0'),rightLabel:String(norm(center+30)).padStart(3,'0'),
+  showCourseMarker:true,selectedDelta:relative(Number(demoValues.course)-Number(s.heading))});
+ dr(5,5,67,28,'#707070');dt('Low',39,25,15,'#fff','center');
+ modeBadge('NO DRIFT','ND');
+ dt('Set Course',266,157,23,'#686868','center','normal');
+ dt(String(Math.round(demoValues.course)).padStart(3,'0'),326,278,133,'#030303','center');dt('°M',477,174,22,'#555','right','normal');
+ modeNfuRudderIndicator(demoValues.rudder);
+}
+function pilot(name){
+ const standby=name==='Standby mode',noDrift=name==='No Drift mode',nfu=name==='Non-Follow Up (NFU)';
+ const h=standby?demoValues.standbyHeading:noDrift?demoValues.course:nfu?demoValues.heading:pageData.pilotTarget;
+ const compassCenter=norm(Math.round(s.heading/30)*30);
+ drawAutopilotSemicircle({current:h,centerLabel:String(compassCenter).padStart(3,'0'),
+  leftLabel:String(norm(compassCenter-30)).padStart(3,'0'),
+  rightLabel:String(norm(compassCenter+30)).padStart(3,'0'),
+  showCourseMarker:!standby,
+  selectedDelta:standby?null:nfu?Number(demoValues.rudder):noDrift?relative(Number(demoValues.course)-Number(s.heading)):relative(Number(pageData.pilotTarget)-Number(s.heading))});
+ const status=standby?'STANDBY':noDrift?'NO DRIFT':nfu?'NON FOLLOW UP':'HEADING HOLD';
+ if(standby){dr(15,164,129,112,'#737373');dt(status,80,187,13,'#fff','center');dt('S',80,260,80,'#fff','center')}
+ else autopilotModeBadge(status,noDrift?'ND':nfu?'NFU':'A');
+ dt(nfu?'Rudder Angle':noDrift?'Set Course':standby?'Heading':'Set Heading',260,147,22,'#666','center','normal');
+ dt(nfu?String(demoValues.rudder):String(h).padStart(3,'0'),324,266,nfu?119:133,'#050505','center');
+ dt('°'+(nfu?'':'M'),477,183,21,'#555','right','normal');
+ dl(86,344,222,344,'#94c451',3);dl(283,344,420,344,'#94c451',3);
+ dr(224,328,58,31,'#101114');dt(String(Math.abs(demoValues.rudder)).padStart(2,'0'),253,352,20,'#fff','center');
+ if(!standby&&!nfu){dr(291,337,30,5,'#42ac63');dr(325,337,22,5,'#42ac63')}
+ 
+}
+// Shared Canvas boat silhouette; the Highway geometry is preserved verbatim.
+function drawHighwayBoat(cx,top,scaleX,scaleY){
+ ctx.save();ctx.translate(cx,top);ctx.scale(scaleX,scaleY);ctx.translate(-443,-328);
+ ctx.beginPath();ctx.rect(395,327,98,80);ctx.clip();
+ ctx.beginPath();ctx.moveTo(406,485);
+ ctx.bezierCurveTo(400,407,421,353,443,328);
+ ctx.bezierCurveTo(468,356,485,409,481,484);
+ ctx.closePath();ctx.fillStyle='#070707';ctx.fill();ctx.restore();
+}
+function highway(){
+ dt('ETW',16,34,22);dt(clock(),250,54,56,'#0b0b0b','center');dt('Rpt088',480,34,20,'#333','right');
+ const horizon=74;poly([[51,76],[449,76],[500,247],[0,247]],'#f3f3f3');
+ poly([[199,76],[301,76],[408,247],[92,247]],'#aaa');
+ for(let i=0;i<7;i++){const t=i/6,yy=horizon+Math.pow(t,1.65)*170;dl(0,yy,500,yy,'#727c82',1.5)}
+ for(let i=-3;i<=3;i++){dl(250+i*32,76,250+i*110,247,'#6d747a',2)}
+ dl(250,75,250,247,'#e62835',8);circ(250,114,13,'#f7f336');
+ // Same boat, original position and size on the Highway page.
+ drawHighwayBoat(250,200,.56,.55);
+ dl(0,250,500,250,'#bbb');dl(170,254,170,363,'#c1c1c1');dl(330,254,330,363,'#c1c1c1');
+ dt('WPT BRG °M',10,276,17);dt('XTE',181,276,18);dt('WPT DIST mi',340,276,16);
+ dt(demoValues.waypointBearing,85,355,76,'#050505','center');dt(demoValues.xte.toFixed(1)+'L',249,355,69,'#050505','center');dt(demoValues.waypointDistance.toFixed(2),418,355,73,'#050505','center');
+}
+function steering(){
+ arc(250,302,313,Math.PI*1.12,Math.PI*1.88,'#9fc952',3);arc(250,302,299,Math.PI*1.12,Math.PI*1.88,'#111',20);
+ for(let i=0;i<13;i++){const a=Math.PI*(1.12+i*.76/12);dl(250+Math.cos(a)*289,302+Math.sin(a)*289,250+Math.cos(a)*309,302+Math.sin(a)*309,'#fff',2)}
+ dr(219,8,62,32,'#111');dt(String(Math.round(s.heading)).padStart(3,'0'),250,33,24,'#fff','center');dt(String(norm(Math.round(s.heading/30)*30-30)).padStart(3,'0'),80,130,20,'#111','center');dt(String(norm(Math.round(s.heading/30)*30+30)).padStart(3,'0'),420,130,20,'#111','center');
+ dt('WPT BRG °T',13,171,20);dt('XTE',184,171,20);dt('COG °T',358,171,20);
+ dl(169,160,169,249,'#b8b8b8');dl(330,160,330,249,'#b8b8b8');
+ dt(String(Math.round(demoValues.waypointBearing)).padStart(3,'0'),84,244,69,'#111','center');dt(Math.abs(demoValues.xte).toFixed(2)+(demoValues.xte<0?'R':'L'),250,238,54,'#111','center');dt(String(Math.round(demoValues.course)).padStart(3,'0'),417,244,69,'#111','center');
+ dr(99,256,303,108,'#777');dl(250,257,250,364,'#f02c36',5);poly([[248,330],[275,292],[270,343]],'#111');
+ dt(Math.abs(demoValues.xte).toFixed(2)+' NM',13,316,17);dt(Math.abs(demoValues.xte).toFixed(2)+' NM',409,316,17);
+}
+function depthHistory(){
+ dt('DEPTH',14,34,23);dt(pageData.depthUnit,480,34,20,'#333','right');dt(depthDisplayValue().toFixed(1),250,128,110,'#090909','center');
+ const grad=ctx.createLinearGradient(0,136,0,362);grad.addColorStop(0,'#8bc7f2');grad.addColorStop(1,'#e8f3fc');dr(61,139,426,223,grad);
+ for(let i=0;i<=2;i++){let y=140+i*110;dl(61,y,488,y,'#eee');dt(i*25,53,y+5,15,'#111','right')}
+ const bed=Array.from({length:48},(_,i)=>[61+i*426/47,Math.min(350,145+(history.depth[i%history.depth.length]||pageData.depth)*4+Math.sin(i*.47)*4)]);
+ poly([...bed,[487,363],[61,363]],'#0a0a0a');
+}
+function tideBoat(cx,top,w,h){
+ // Hull silhouette shared in style with the Laylines vessel: pointed bow, tapered stern and central cockpit.
+ const left=cx-w/2,right=cx+w/2,bottom=top+h;
+ ctx.save();
+ const hull=ctx.createLinearGradient(left,top,right,bottom);hull.addColorStop(0,'#d9d9d9');hull.addColorStop(.48,'#8f9499');hull.addColorStop(1,'#f1f1f1');
+ ctx.beginPath();ctx.moveTo(cx,top);ctx.bezierCurveTo(right-5,top+52,right+2,top+126,right-3,bottom-29);ctx.quadraticCurveTo(cx,bottom,left+3,bottom-29);ctx.bezierCurveTo(left-2,top+126,left+5,top+52,cx,top);ctx.closePath();ctx.fillStyle=hull;ctx.fill();
+ // White deck inset gives the open, double-sided hull appearance of the reference.
+ ctx.beginPath();ctx.moveTo(cx,top+39);ctx.bezierCurveTo(right-20,top+79,right-20,top+149,cx+24,bottom-43);ctx.quadraticCurveTo(cx,bottom-22,cx-24,bottom-43);ctx.bezierCurveTo(left+20,top+149,left+20,top+79,cx,top+39);ctx.closePath();ctx.fillStyle='#fff';ctx.fill();
+ ctx.restore();
+}
+function tideCurrentArrow(cx,cy,angle,length,width){
+ // Blue arrow represents current direction; its heading follows tideDirection.
+ ctx.save();ctx.translate(cx,cy);ctx.rotate(angle*DEG);
+ const g=ctx.createLinearGradient(0,-length*.55,0,length*.55);g.addColorStop(0,'#eef8ff');g.addColorStop(.22,'#8fc9ff');g.addColorStop(.52,'#2377ef');g.addColorStop(1,'#2d72ed');ctx.fillStyle=g;
+ ctx.beginPath();ctx.moveTo(-width*.22,-length*.52);ctx.lineTo(width*.22,-length*.52);ctx.lineTo(width*.22,length*.08);ctx.lineTo(width*.52,length*.08);ctx.lineTo(0,length*.54);ctx.lineTo(-width*.52,length*.08);ctx.lineTo(-width*.22,length*.08);ctx.closePath();ctx.fill();ctx.restore();
+}
+function tide(){
+ const boatSpeed=demoValues.boatSpeed,heading=s.heading,depth=depthDisplayValue(),depthUnit=pageData.depthUnit||'m',speedUnit=pageData.speedUnit||'kn';
+ // Left data column, measured against the supplied 1049 x 737 reference and mapped to the 500 x 370 canvas.
+ dl(168,8,168,365,'#b8b8b8',1);dl(14,128,154,128,'#d0d0d0',1);dl(14,247,154,247,'#d0d0d0',1);
+ dt('BOAT SPD',11,30,22,'#3b3b3b','left');dt(speedUnit,158,30,20,'#333','right');
+ dt(boatSpeed.toFixed(1),10,113,78,'#030303','left');
+ dt('HDG',11,157,22,'#3b3b3b','left');dt(dataStatus.headingReference==='True'?'°T':'°M',158,157,21,'#333','right');dt(String(Math.round(heading)).padStart(3,'0'),10,236,78,'#030303','left');
+ dt('DEPTH',11,276,22,'#3b3b3b','left');dt(depthUnit,158,276,21,'#333','right');dt(depth.toFixed(1),10,359,78,'#030303','left');
+ // Main title and vessel/current graphic.
+ dt('TIDE',176,63,54,'#303030','left');
+ tideBoat(326,27,126,286);
+ const currentAngle=((demoValues.tideDirection-heading+540)%360)-180;
+ tideCurrentArrow(328,185,currentAngle,245,112);
+ // Bottom current vector data: speed at left, magnetic direction at right.
+ dt(speedUnit,177,305,23,'#222','left');dt(demoValues.tideSpeed.toFixed(1),177,358,51,'#030303','left');
+ dt('°M',484,305,23,'#222','right');dt(String(Math.round(demoValues.tideDirection)).padStart(3,'0'),484,358,51,'#030303','right');
+ 
+}
+// Additional panels recreated from the composite pages reference, display-only.
+function demoWindNumbers(){
+ dt('AWA',17,33,22,'#555');poly([[7,76],[35,61],[35,91]],'#c53542');
+ dt(String(Math.round(n2k.pgn130306.apparentWindAngleDeg)),250,142,126,'#080808','center');dt('°',471,80,20,'#666','right');
+ dl(8,164,490,164,'#b9b9b9');dt('TWS',17,197,22,'#555');dt('m/s',482,197,19,'#666','right');
+ dt(s.tws.toFixed(1),250,343,125,'#090909','center');
+}
+function demoSpeedDepth(){
+ dt('BOAT SPD',17,39,23,'#555');dt('kn',482,39,21,'#555','right');
+ dr(15,113,35,5,'#46599c');dt(demoValues.boatSpeed.toFixed(1),250,168,133,'#080808','center');
+ dl(12,185,488,185,'#c6c6c6');dt('DEPTH',17,215,23,'#555');dt('m',482,215,21,'#555','right');
+ dt(depthDisplayValue().toFixed(1),250,349,125,'#080808','center');
+}
+function demoWindHistory(){
+ dt('TWD',15,32,22,'#555');dt(String(Math.round(s.twd)).padStart(3,'0')+' °M',164,32,24,'#111','center');
+ dt('TWS',269,32,22,'#555');dt(s.tws.toFixed(1)+' kn',478,32,23,'#111','right');
+ dl(251,41,251,355,'#9ba0a6');
+ const datasets=[{x:39,w:192,min:0,max:360,vals:history.twd},{x:273,w:192,min:0,max:30,vals:history.tws}];
+ for(const d of datasets){for(let i=0;i<=5;i++){const y=49+i*60;dl(d.x,y,d.x+d.w,y,'#b9c0c5');dt(i*2,d.x-8,y+5,13,'#666','right')}
+ const pts=d.vals.map((v,i)=>[d.x+(v-d.min)/(d.max-d.min)*d.w,50+i*300/Math.max(1,d.vals.length-1)]);
+ ctx.beginPath();pts.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.strokeStyle='#455ca7';ctx.lineWidth=2.5;ctx.stroke();}
+ 
+}
+function demoGpsPosition(){
+ dt('POS',15,35,22,'#555');dt(coordinate(n2k.pgn129025.latitudeDeg,true),250,91,38,'#111','center');
+ dt(coordinate(n2k.pgn129025.longitudeDeg,false),250,135,38,'#111','center');dl(15,152,485,152,'#bbb');
+ const columns=[['COG',String(Math.round(demoValues.course)).padStart(3,'0')+'°M'],['TIME LOC',clock()],['SOG',demoValues.speed.toFixed(1)+' kn']];
+ columns.forEach(([label,value],i)=>{const x=18+i*163;if(i)dl(x-8,159,x-8,262,'#bbb');dt(label,x,184,19,'#555');dt(value,x,238,i===1?27:32,'#111')});
+ dl(15,269,485,269,'#bbb');dt('WPT BRG °M',18,298,20,'#555');dt(String(Math.round(demoValues.waypointBearing)).padStart(3,'0'),18,348,48);
+ dt('ETW',213,298,20,'#555');dt(clock(),210,343,28);dt('WPT DIST mi',354,298,19,'#555');
+ dt(demoValues.waypointDistance.toFixed(2),359,348,43);
+}
+function demoSailSteer(){
+ const cx=250,cy=186,r=151;
+ arc(cx,cy,r,0,Math.PI*2,'#48535d',22);
+ arc(cx,cy,r,Math.PI*1.13,Math.PI*1.495,'#b62d41',15);
+ arc(cx,cy,r,Math.PI*1.505,Math.PI*1.82,'#39a25c',15);
+ for(let i=0;i<24;i++){let a=Math.PI*2*i/24;dl(cx+Math.sin(a)*138,cy-Math.cos(a)*138,cx+Math.sin(a)*150,cy-Math.cos(a)*150,'#fff',i%3===0?3:1.5)}
+ for(let i=0;i<12;i++){const a=Math.PI*2*i/12;dt(String(i*30).padStart(3,'0'),cx+Math.sin(a)*113,cy-Math.cos(a)*113+5,15,'#28303a','center')}
+ poly([[250,92],[236,130],[264,130]],'#e54439');poly([[250,137],[223,217],[250,205],[277,217]],'#293b4a');
+ poly([[183,183],[230,172],[230,194]],'#3769b4');
+ dt('BSPD '+demoValues.boatSpeed.toFixed(1)+' kn',14,38,22,'#222');dt('TWA '+Math.round(s.twa)+'°',481,38,22,'#222','right');
+ dt('TWD '+String(Math.round(s.twd)).padStart(3,'0')+'°',14,352,26,'#222');dt('TWS '+demoValues.tws.toFixed(1)+' kn',484,352,26,'#222','right');
+ 
+}
+function drawReferencePage(name){
+ if(!Object.hasOwn(demoViews,name))return false;
+ pageCanvas();ctx.save();ctx.beginPath();ctx.rect(188,222,511,380);ctx.clip();
+ ctx.translate(191,227);ctx.scale(1.006,1.006);dr(0,0,500,370,'#fff');
+ switch(name){
+ case 'Depth gauge':drawCanvasDepth();break;
+ case 'TWS gauge':gauge('TWS','kn',demoValues.tws,30);break;
+ case 'SOG':plot('SOG','kn',history.sog,0,30);break;
+ case 'SOG / COG':plot('SOG','kn',history.sog,0,30);dt('COG '+String(Math.round(demoValues.course)).padStart(3,'0')+'°T',475,349,17,'#252525','right');break;
+ case 'Weather':plot('BAROMETER','mb',history.pressure,990,1020,true);break;
+ case 'Basic Wind angle & Speed':demoWindNumbers();break;
+ case 'Basic Speed & Depth':demoSpeedDepth();break;
+ case 'Wind plot':demoWindHistory();break;
+ case 'GPS':demoGpsPosition();break;
+ case 'SailSteer':demoSailSteer();break;
+ case 'Depth history':depthHistory();break;
+ case 'Tide':tide();break;
+ case 'Highway':highway();break;
+ case 'Steering':steering();break;
+ case 'Non-Follow Up (NFU)':drawNfuReference();break;
+ case 'No Drift mode':drawNoDriftReference();break;
+ default:pilot(name);break;
+ }
+ ctx.restore();return true;
+}
+function drawActivePage(){const name=enabledPages[menuState.page];if(Object.hasOwn(canvasReferencePages,name))drawCanvasReference(name);else if(name==='1 + 3 Digital - bottom'||name==='1 + 3 Digital'||name==='Numeric data view')drawNumericView();else if(name==='Autopilot status')drawPilotView();else if(name==='Wind Mode')drawWindMode();else drawReferencePage(name)}
+function drawExpandedDisplay(){const page=enabledPages[menuState.page];if(['TWS JPG','TWS gauge'].includes(page)){drawCanvasTws();return}if(['Depth JPG','Depth gauge'].includes(page)){drawCanvasDepth();return}const sx=674/517,sy=522/386;ctx.save();ctx.beginPath();ctx.rect(108,134,674,522);ctx.clip();ctx.translate(108,134);ctx.scale(sx,sy);ctx.translate(-185,-219);drawActivePage();ctx.restore();}
+function availabilityWarning(){
+ const name=enabledPages[menuState.page];let msg='';
+ if(name==='Laylines'&&!dataStatus.h5000)msg='LAYLINES: H5000 UNAVAILABLE';
+ else if(name==='Wind Mode'&&!dataStatus.valid.wind)msg='WIND DATA UNAVAILABLE';
+ else if(['Depth history','Depth JPG','Depth gauge'].includes(name)&&!dataStatus.valid.depth)msg='DEPTH DATA UNAVAILABLE';
+ else if(name==='Tide'&&(!dataStatus.valid.tide||!dataStatus.valid.depth))msg='TIDE / DEPTH DATA UNAVAILABLE';
+ else if(['SailSteer','Highway','Steering JPG','Laylines','Autopilot status'].includes(name)&&!dataStatus.valid.heading)msg='HEADING DATA UNAVAILABLE';
+ else if(['SailSteer','Highway','Steering JPG'].includes(name)&&!dataStatus.valid.waypoint)msg='WAYPOINT DATA UNAVAILABLE';
+ if(msg){ctx.save();dr(108,134,674,522,'#fff');dt(msg,444,399,23,'#9b0000','center');dt('SIMULATION - NO NAVIGATION DATA',444,430,16,'#555','center');ctx.restore()}
+}
+function render(){ctx.setTransform(canvas.width/W,0,0,canvas.height/H,0,0);ctx.fillStyle='#1b1c1f';ctx.fillRect(0,0,W,H);ctx.translate(-OX,-OY);housing();if(enabledPages[menuState.page]==='Laylines'){ctx.save();ctx.translate(444,398);ctx.scale(1.17,1.17);ctx.translate(-444,-412);rose();ctx.restore();readings();}else{drawExpandedDisplay();}availabilityWarning();controls();
+ drawMenu();
+ const message=`Visual simulation: page ${enabledPages[menuState.page]}; boat speed ${s.bspd.toFixed(1)}, wind angle ${s.twa} degrees, wind direction ${s.twd} degrees, wind speed ${s.tws.toFixed(1)}, heading ${s.heading} degrees. No hardware connection.`;
+ canvas.setAttribute('aria-label',message);status.textContent=message;
+}
+function resize(){const r=canvas.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);const w=Math.max(1,Math.round(r.width*d)),h=Math.max(1,Math.round(r.height*d));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}render()}
+const fields=['bspd','twa','twd','tws','heading'];
+function setValues(patch){if(!patch||typeof patch!=='object')throw new TypeError('Objeto de valores esperado');const normalized={};const bounds={bspd:[0,99.9],twa:[0,180],twd:[0,359],tws:[0,99.9],heading:[0,359],awd:[0,359]};for(const [key,value] of Object.entries(patch)){if(key==='mode'){if(value!=='TRUE'&&value!=='APP')throw new RangeError('mode: TRUE ou APP');continue}if(!bounds[key])throw new RangeError('Campo desconhecido: '+key);const n=Number(value);if(!Number.isFinite(n)||n<bounds[key][0]||n>bounds[key][1])throw new RangeError(key+': valor fora dos limites');normalized[key]=n}if(Object.hasOwn(patch,'mode'))normalized.mode=patch.mode;Object.assign(s,normalized);if(Object.hasOwn(normalized,'twa')&&!Object.hasOwn(normalized,'twd'))s.twd=norm(s.heading+s.twa);else if(Object.hasOwn(normalized,'twd')||Object.hasOwn(normalized,'heading'))s.twa=relative(s.twd-s.heading);demoRunning=false;sample();render();return {...s}}
+function adjust(n){const key=s.selected,step=key==='bspd'||key==='tws'?.1:1,[min,max]=({bspd:[0,99.9],twa:[0,180],twd:[0,359],tws:[0,99.9],heading:[0,359]})[key];setValues({[key]:Math.round(Math.max(min,Math.min(max,s[key]+step*n))*10)/10})}
+function handle(x,y){
+ const markerAngle=relativeBearing(s.mode==='TRUE'?s.twd:s.awd),marker=polar(markerAngle,180);
+ if(Math.hypot(x-marker[0],y-marker[1])<=32){setValues({mode:s.mode==='TRUE'?'APP':'TRUE'});return}
+ if(y>=663&&y<=760){if(x<238){s.selected=fields[(fields.indexOf(s.selected)+1)%fields.length];s.menu=false;render()}else if(x<375)adjust(1);else if(x<513){s.selected=fields[(fields.indexOf(s.selected)+1)%fields.length];s.menu=false;render()}else if(x<650)adjust(-1);else{s.menu=!s.menu;render()}return}if(x>=185&&x<=702&&y>=219&&y<=605){if(y<335){s.selected=x<444?'bspd':'twa'}else if(y>495){s.selected=x<444?'twd':'tws'}else{s.selected='heading'}render()}}
+// Triton2 menu simulation. Labels and hierarchy follow the supplied operator manual, pp. 8-11, 15-26, 28-36, 47-74, 78-81.
+// All actions remain local to this browser; no network, NMEA, autopilot or device I/O.
+const leaf=(label,kind='info',opts=[])=>({label,kind,opts});
+const group=(label,children)=>({label,children});
+const toggle=(label)=>leaf(label,'toggle');
+const choice=(label,values)=>leaf(label,'choice',values);
+const number=(label)=>leaf(label,'number');
+const view=(label)=>leaf(label,'view');
+const note=(label)=>leaf(label,'info');
+const targets=()=>[choice('Target wind angle',['Polar','Actual','Manual']),number('Upwind angle'),number('Downwind angle')];
+const laylines=()=>[toggle('Tidal flow correction'),...targets(),choice('Layline limits',['Off','5 min','10 min','15 min','30 min'])];
+const pagesList=['Steering JPG','TWS JPG','Depth JPG','Weather JPG','Autopilot status','Wind Mode','SailSteer','Highway','Laylines','Wind plot','Tide','Weather','Depth history','Basic Speed & Depth','Basic Wind angle & Speed','GPS','Composite wind','AIS','Steering','Single Time plot','Dual Time plot'];
+const fullViewNames=Object.freeze({'Wind Mode':'Wind Mode (Dynamic Simulation)',"Steering JPG":"Steering Reference (Canvas)","TWS JPG":"True Wind Speed Reference Image","Depth JPG":"Depth Reference Image","Weather JPG":"Weather Reference Image","Autopilot status":"Autopilot Status (Dynamic Simulation)","SailSteer":"SailSteer Sailing Data","Highway":"Highway Navigation Display","Laylines":"Laylines Sailing Display","Wind plot":"Wind Speed and Direction Plot","Tide":"Tide Information Display","Weather":"Weather Information Display","Depth history":"Depth History Graph","Basic Speed & Depth":"Boat Speed and Depth","Basic Wind angle & Speed":"Wind Angle and Wind Speed","GPS":"GPS Position and Navigation Data","Composite wind":"Composite Wind Display","AIS":"Automatic Identification System (AIS)","Steering":"Steering Information Display","Single Time plot":"Single Data Time Plot","Dual Time plot":"Dual Data Time Plot","SOG":"Speed Over Ground (SOG)","SOG / COG":"Speed Over Ground and Course Over Ground (SOG / COG)","Depth gauge":"Depth Digital Gauge","TWS gauge":"True Wind Speed (TWS) Digital Gauge","AUTO mode (Heading hold)":"Autopilot AUTO Mode (Heading Hold)","Autopilot reference":"Autopilot Status Reference Image","Standby mode":"Autopilot Standby Mode","Non-Follow Up (NFU)":"Autopilot Non-Follow Up (NFU) Mode","No Drift mode":"Autopilot No Drift Mode","1 + 3 Digital - bottom":"One Large and Three Digital Fields (Bottom)","Full screen":"Full-Screen Data View","2x1 Grid":"Two by One Data Grid","2x2 Grid":"Two by Two Data Grid","2x2 Grid Offset":"Offset Two by Two Data Grid","3x3 Grid":"Three by Three Data Grid","1 + 6 Digital":"One Large and Six Digital Fields","1 + 3 Digital - side":"One Large and Three Digital Fields (Side)","1 + 4 Digital":"One Large and Four Digital Fields","Single analog":"Single Analogue Gauge","Analog + 3":"Analogue Gauge and Three Data Fields","Composite Wind + 3":"Composite Wind and Three Data Fields","SailSteer + 3":"SailSteer and Three Data Fields"});
+function fullViewName(key){return fullViewNames[key]||key}
+const referencePageNames=Object.freeze(["Basic Wind angle & Speed","Basic Speed & Depth","Wind plot","GPS","SailSteer","Standby mode","AUTO mode (Heading hold)","Non-Follow Up (NFU)","No Drift mode","Autopilot reference","Highway","Steering","SOG","SOG / COG","Tide","Weather","Depth history","Depth gauge","TWS gauge"]);
+const templates=['1 + 3 Digital - bottom','Full screen','2x1 Grid','2x2 Grid','2x2 Grid Offset','3x3 Grid','1 + 6 Digital','1 + 3 Digital - side','1 + 4 Digital','Single analog','Analog + 3','Composite Wind + 3','SailSteer + 3'];
+const viewLibrary=Object.freeze(['Autopilot status','SailSteer','Wind Mode','Highway','Laylines','Wind plot','Tide','Weather','Depth history','Steering JPG','TWS JPG','Depth JPG','Weather JPG','SOG','SOG / COG','Non-Follow Up (NFU)','No Drift mode']);
+const enabledPages=['Autopilot status','SailSteer','Wind Mode','Highway','Laylines','Tide','Depth history','Steering JPG'];
+const dataFields=['Boat speed','Speed over ground','Course over ground','Heading','Apparent wind angle','Apparent wind speed','True wind angle','True wind speed','True wind direction','Depth','Sea temperature','Trip distance','Race timer'];
+const referenceGroups=[["Autopilot Modes",["Standby mode","AUTO mode (Heading hold)","Non-Follow Up (NFU)","No Drift mode","Autopilot reference"]],["Navigation and Speed",["SailSteer","GPS","Highway","Steering","Basic Speed & Depth","SOG","SOG / COG"]],["Weather, Tide and Depth",["Basic Wind angle & Speed","Wind plot","Tide","Weather","Depth history","Depth gauge","TWS gauge"]]];
+const pageSlots=Array.from({length:enabledPages.length},(_,i)=>({label:`${i+1}  ${fullViewName(enabledPages[i])}`,children:[toggle('Enabled'),group('Replace Page',[...pagesList,...templates].map(v=>({label:fullViewName(v),viewKey:v,kind:'replace',slot:i})).concat([group('Reference views',referenceGroups.map(([category,names])=>group(category,names.map(v=>({label:fullViewName(v),viewKey:v,kind:'replace',slot:i}))))) ])),group('Change data',[1,2,3,4].map(n=>choice('Data field '+n,dataFields)))]}));
+const pageSlotTemplates=pageSlots.slice();
+function setActivePages(keys){
+ if(!Array.isArray(keys)||keys.length!==8||new Set(keys).size!==8||keys.some(k=>!viewLibrary.includes(k)))
+  throw new RangeError('Exactly eight distinct library pages are required');
+ enabledPages.splice(0,8,...keys);
+ enabledPages.forEach((key,i)=>{pageSlots[i].label=`${i+1}  ${fullViewName(key)}`});
+ menuState.page=Math.min(menuState.page,7);menuState.stack=[];render();return enabledPages.slice();
+}
+ const calibration=group('Calibration',[
+ group('Boat speed',[number('SOG reference'),number('Distance reference'),toggle('Use SOG as boat speed')]),
+ group('Wind',[number('MHU alignment'),number('True wind angle (H5000)'),number('True wind speed (H5000)'),number('Mast height (H5000)'),toggle('Motion correction (H5000)')]),
+ group('Depth',[number('Depth offset'),number('Aft depth offset')]),
+ group('Heading',[number('Offset'),note('Calibrate'),note('Auto calibrate'),choice('Magnetic variation',['Auto','Manual']),number('Manual variation'),toggle('Use COG as heading')]),
+ group('Heel/Trim',[number('Heel offset'),number('Trim offset')]),group('Environment',[number('Sea temperature offset'),number('Air temperature offset'),number('Barometric pressure offset')]),
+ group('Rudder',[note('Rudder feedback calibration')]),group('Laylines',laylines()),group('Advanced',[number('Third-party sensor offset')])]);
+const remote=group('Remote displays',['10/10','20/20','30/30','40/40'].map(type=>group(type+' displays',[
+ note('Connected displays'),group('Display options',[note('Select data'),toggle('White backlight'),choice('Display group',['Default','1','2','3']),number('Instance')])])));
+const damping=group('Damping',['Heading','Apparent wind','True wind','Boat speed','SOG','COG','Heel Angle','Trim Angle','Tide'].map(number));
+const race=group('Race timer',[view('Race Timer'),note('Start / Stop'),note('Sync'),note('Reset'),number('Set start value'),toggle('Rolling timer'),toggle('Auto start trip')]);
+const pages=group('Pages',[group('Pages...',pageSlots),group('Library',viewLibrary.map(v=>({label:fullViewName(v),viewKey:v,kind:'library'}))),toggle('AutoScroll'),choice('AutoScroll time',['2 sec','5 sec','10 sec','30 sec','60 sec'])]);
+const trip=group('Trip log',['Trip 1','Trip 2','Log'].map(v=>group(v,[view('View '+v),note('Start / Stop'),note('Reset')])));
+const alarms=group('Alarms',[group('Alarm history',[view('Alarm details'),note('Clear history')]),group('Alarm settings',[
+ group('Vessels',[toggle('Dangerous vessel'),number('AIS vessel lost'),toggle('Vessel message')]),
+ group('Autopilot',[toggle('Autopilot alarm')]),group('Depth',[number('Shallow water'),number('Deep water')]),
+ group('Wind',[number('True wind speed high'),number('True wind speed low')]),group('Navigation',[number('XTE')])]),toggle('Alarms enabled'),toggle('Siren Enabled')]);
+const windModes=()=>choice('Wind mode',['Auto','Apparent','True']);
+const h5000=group('Autopilot - H5000',[
+ choice('Performance mode',['1','2','3','4','5']),
+ group('Steering',[choice('Automatic response',['Off','Economy','Normal','Sport']),choice('Recovery',['Off','Narrow','Medium','Wide']),toggle('Adapt'),group('Limits',['TWA min','TWA max','Bear away max','Cruising speed','Rudder limit','Off course','Manual speed'].map(number))]),
+ group('Sailing',[choice('Wind mode',['Auto','Apparent','True','Polar']),group('Gust response',['Gust Min','Response rate','TWA response'].map(number)),number('TWS response'),number('Tack angle'),number('Tack time'),number('Heel compensation response rate')]),
+ note('Installation - separate commissioning manual')]);
+const nac=group('Autopilot - NAC-2 / NAC-3',[
+ group('Steering',[...['Low speed','High speed'].map(v=>group(v,['Turn rate','Rudder gain','Counter rudder','Autotrim'].map(number).concat(choice('Init rudder',['Center','Actual'])))),...['Rudder limit','Off heading limit','Track response','Track approach angle','Course change confirm angle'].map(number)]),
+ group('Sailing',[windModes(),number('Tack time'),number('Tack angle'),number('Manual speed')]),note('Installation - separate commissioning manual')]);
+const ac=group('Autopilot - AC12N / AC42N / SG05',[
+ choice('Response',['HI-A','LO-A','HI-M','LO-M','Wind']),choice('Sea state filter',['Off','Auto','Manual']),
+ group('Sailing',[number('Tack time'),number('Tack angle'),windModes(),toggle('VMG optimizing'),toggle('Layline steering')]),
+ group('Automatic steering',[number('Transition speed'),...['High','Low'].map(v=>group(v,['Rudder gain','Counter rudder','Auto trim','Rate limit'].map(number))),...['Minimum rudder','Min wind angle starboard','Min wind angle port','Navigation change limit'].map(number)]),
+ note('Installation - separate commissioning manual')]);
+const ais=group('AIS',[group('Dangerous vessels',[number('Closest point of approach (CPA)'),number('Time to CPA (TCPA)')]),choice('Speed and course',['Absolute','Relative']),choice('AIS icon orientation',['Heading','COG']),number('MMSI')]);
+const aisPageOptions=[number('Range'),group('Icon Filters',[toggle('Hide safe vessels'),number('Minimum vessel speed')]),group('Extension lines',[number('Own vessel'),number('Other vessels')]),group('Target list',[choice('Sort by',['Name','Distance','Speed','Course']),choice('Include targets',['All','Dangerous']),view('Selected target details')]),group('Message listing',[view('Received messages'),view('Original message')])];
+const displaySetup=group('Display Setup',[choice('Backlight level',Array.from({length:10},(_,i)=>`${(i+1)*10}%`)),choice('Display group',['Default','1','2','3']),toggle('Night mode'),choice('Night mode color',['Red','Green','Blue','White']),toggle('Invert day color'),note('Sleep')]);
+const system=group('System',[
+ group('Network',[group('Sources',[note('Auto select'),group('Manual source selection',['Heading','Boat speed','Depth','Wind','GPS','Sea temperature'].map(note))]),group('Device list',[view('Detected devices'),number('Instance'),view('Device data')]),group('Diagnostics',['Bus state','Rx Overflows','Rx Overruns','Rx Errors','Tx Errors','Rx Messages','Tx Messages','Bus Load','Fast Packet Errors'].map(view)),group('Network groups',[choice('Display group',['Default','1','2','3']),choice('Damping group',['Default','1','2','3']),choice('Alarm group',['Default','1','2','3'])])]),
+ group('Units',['Distance','Boat speed','Wind speed','Depth','Temperature','Pressure'].map(note)),
+ group('Decimal places',[choice('Speed',['0','1','2']),choice('Sea temperature',['0','1','2'])]),choice('Key beeps',['Off','Low','Medium','Loud']),
+ choice('Language',['English','Português']),group('Time',[number('Local time zone offset'),choice('Time format',['12h','24h']),note('Date format')]),
+ displaySetup,group('Display mode',[choice('Display mode',['Instrument display only','Autopilot display only','Autopilot display when engaged']),toggle('Show MOB'),toggle('Show autopilot advanced settings')]),
+ group('Files',[group('Internal memory',[view('Browse files'),view('File details')]),group('USB device',[view('Browse files'),view('File details')])]),toggle('Simulate'),group('Restore defaults',[note('Select settings to restore'),note('Cancel')]),
+ group('Engine setup',[group('Vessel setup',['Number of engines','Number of fuel tanks','Total fuel capacity'].map(number)),group('Engine display setup',[note('Select engine data for each gauge')]),group('Gauge limits',['RPM','Vessel fuel rate'].map(number))]),note('Global reset'),view('About')]);
+const settings=group('Settings',[race,pages,remote,calibration,damping,trip,alarms,h5000,nac,ac,ais,system]);
+const indicators=group('Indicators',['Apparent wind','COG','Tide','Laylines','Waypoint'].map(toggle));
+function pageMenu(){let extras=[];const name=enabledPages[menuState.page];
+ if(Object.hasOwn(canvasReferencePages,name))extras=[note('Canvas reconstruction')];
+ if(name==='SailSteer')extras=[group('Laylines',laylines()),indicators];
+ if(name==='Laylines')extras=[toggle('Tidal flow correction'),toggle('Show grid'),...targets(),choice('Layline limits',['Off','5 min','10 min','15 min','30 min'])];
+ if(name==='AIS')extras=aisPageOptions;
+ if(['Wind plot','Weather','Depth history','Single Time plot','Dual Time plot'].includes(name))extras=[number('Time range')];
+ if(name==='Single Time plot')extras.push(choice('Change data',dataFields));
+ if(name==='Dual Time plot')extras.push(group('Edit timeplots',[group('Plot 1',[choice('Change data',dataFields),number('Time range')]),group('Plot 2',[choice('Change data',dataFields),number('Time range')])]));
+ if(name==='Wind Mode')extras=[note('Wind angle display only - no autopilot output')];
+ if(name==='Autopilot status')extras=[group('Autopilot settings (simulation only)',[note('H5000 settings'),note('NAC-2 / NAC-3 settings'),note('AC12N / AC42N / SG05 settings')])];
+ if(name==='SailSteer')extras.push(group('Display data',[choice('Change data',dataFields)]));
+ if(name==='Highway')extras=[group('Display data',[choice('Change data',dataFields)])];
+ if(name==='Composite wind')extras=[group('Display data',[choice('Change data',dataFields)])];
+ if(name==='Steering')extras=[group('Display data',[choice('Change data',dataFields)])];
+ if(Object.hasOwn(referencePageMap,name))extras.push(note('Canvas simulation'));
+ return group(fullViewName(name),[race,...extras,settings]);}
+const menuState={stack:[],cursor:0,scroll:0,page:1,values:new Map(),dialog:null,lastMenu:0,sleep:false,timer:null,pointer:null};
+function current(){return menuState.stack.at(-1)}
+function entries(){return current()?.children||[]}
+function enter(root){menuState.stack=[root];menuState.cursor=0;menuState.scroll=0;menuState.dialog=null;render()}
+function goBack(){if(menuState.dialog){menuState.dialog=null}else if(menuState.stack.length>1){menuState.stack.pop();menuState.cursor=0;menuState.scroll=0}else{menuState.stack=[]}render()}
+function openLibraryPage(key){
+ if(!viewLibrary.includes(key)&&!pagesList.includes(key))throw new RangeError('Unknown library page: '+key);
+ let index=enabledPages.indexOf(key);
+ if(index<0){index=enabledPages.findLastIndex(v=>!['Laylines','SailSteer','Depth JPG','Wind Mode'].includes(v));if(index<0)index=enabledPages.length-1;enabledPages[index]=key;pageSlots[index].label=`${index+1}  ${fullViewName(key)}`}
+ menuState.page=index;return key;
+}
+function pagesKey(long=false){if(menuState.sleep){menuState.sleep=false;render();return}if(menuState.stack.length){goBack();return}if(long){enter(group('Pages',enabledPages.map((v,i)=>({label:fullViewName(v),kind:'page',index:i}))));return}menuState.page=(menuState.page+1)%enabledPages.length;render()}
+function menuKey(long=false,double=false){if(menuState.sleep){menuState.sleep=false;render();return}if(long){enter(displaySetup);return}if(double){enter(settings);return}enter(pageMenu())}
+// Display-only adjustments: never transmit commands or write to an actuator.
+function adjustPilotView(delta){
+ const page=enabledPages[menuState.page];
+ if(page==='Wind Mode'){
+  demoRunning=false;windView.setAngleDeg=Math.max(-180,Math.min(180,windView.setAngleDeg+delta));
+ }else if(page==='Non-Follow Up (NFU)'){
+  demoRunning=false;
+  demoValues.rudder=Math.max(-45,Math.min(45,Math.round(Number(demoValues.rudder)+delta)));
+ }else if(page==='No Drift mode'){
+  demoRunning=false;
+  demoValues.course=norm(Math.round(Number(demoValues.course)+delta));
+ }else if(page==='Autopilot status'||page==='AUTO mode (Heading hold)'||page==='Autopilot reference'){
+  demoRunning=false;
+  const target=norm(Math.round(Number(pageData.pilotTarget)+delta));
+  pageData.pilotTarget=target; // Keep the actual heading independent of the selected target.
+ }else if(page==='Standby mode'){
+  demoRunning=false;
+  demoValues.standbyHeading=norm(Math.round(Number(demoValues.standbyHeading)+delta));
+ }else return false;
+ render();return true;
+}
+function move(delta){if(menuState.dialog){const d=menuState.dialog;if(d.kind==='number'){d.value=Math.max(-999,Math.min(9999,d.value+delta));render();return}if(d.kind==='choice'){d.index=(d.index+delta+d.node.opts.length)%d.node.opts.length;render();return}}
+ if(!menuState.stack.length){if(!adjustPilotView(delta>0?1:-1))adjust(delta>0?1:-1);return}const list=entries();if(!list.length)return;menuState.cursor=(menuState.cursor+delta+list.length)%list.length;menuState.scroll=Math.min(Math.max(menuState.scroll,menuState.cursor-7),menuState.cursor);render()}
+function select(){if(menuState.dialog){const d=menuState.dialog;if(d.kind==='info'){menuState.dialog=null;render();return}if(d.kind==='choice')menuState.values.set(d.node,d.node.opts[d.index]);else menuState.values.set(d.node,d.value);menuState.dialog=null;render();return}
+ const node=entries()[menuState.cursor];if(!node)return;
+ if(node.children){menuState.stack.push(node);menuState.cursor=0;menuState.scroll=0;render();return}
+ if(node.kind==='page'){menuState.page=node.index;menuState.stack=[];render();return}
+  if(node.kind==='library'){openLibraryPage(node.viewKey);menuState.stack=[];render();return}
+ if(node.kind==='replace'){const key=node.viewKey||node.label;enabledPages[node.slot]=key;pageSlots[node.slot].label=`${node.slot+1}  ${fullViewName(key)}`;menuState.stack=[];menuState.page=node.slot;render();return}
+ if(node.kind==='toggle'){menuState.values.set(node,!menuState.values.get(node));render();return}
+ if(node.kind==='choice'){menuState.dialog={kind:'choice',node,index:Math.max(0,node.opts.indexOf(menuState.values.get(node)))};render();return}
+ if(node.kind==='number'){menuState.dialog={kind:'number',node,value:Number(menuState.values.get(node)||0)};render();return}
+ if(node.label==='Sleep'){menuState.sleep=true;menuState.stack=[];render();return}
+ if(node.label==='Simulate'){menuState.values.set(node,!menuState.values.get(node));render();return}
+ menuState.dialog={kind:'info',node};render()}
+const MENU_SCALE=1.155,MENU_CENTER_X=443.5,MENU_CENTER_Y=412;
+function menuPoint(p){return {x:MENU_CENTER_X+(p.x-MENU_CENTER_X)/MENU_SCALE,y:MENU_CENTER_Y+(p.y-MENU_CENTER_Y)/MENU_SCALE}}
+function drawMenu(){if(menuState.sleep){box(185,219,517,386,0,'#060708');return}if(!menuState.stack.length)return;
+ ctx.save();ctx.translate(MENU_CENTER_X,MENU_CENTER_Y);ctx.scale(MENU_SCALE,MENU_SCALE);ctx.translate(-MENU_CENTER_X,-MENU_CENTER_Y);
+ // Black menu, grey bevel/header, lime focus bar, white text and subtle row separators: reference pp. 9-11, 15, 78.
+ const x=185,y=219,w=517,h=386;ctx.save();ctx.beginPath();ctx.rect(x,y,w,h);ctx.clip();box(x,y,w,h,0,'#090a09','#424547',2);
+ const grad=ctx.createLinearGradient(x,y,x,y+45);grad.addColorStop(0,'#45484a');grad.addColorStop(1,'#111315');box(x,y,w,42,0,grad);
+ const heading=current().label;ctx.font='bold 21px Arial';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='#f2f3f0';ctx.fillText(heading,x+14,y+21,w-85);ctx.textAlign='right';ctx.font='bold 14px Arial';ctx.fillStyle='#bedc66';ctx.fillText('SIM',x+w-16,y+22);
+ line(x+3,y+43,x+w-3,y+43,'#a4c838',2);
+ const list=entries(),top=y+49,row=37,shown=8;menuState.scroll=Math.max(0,Math.min(menuState.scroll,Math.max(0,list.length-shown)));if(menuState.cursor<menuState.scroll)menuState.scroll=menuState.cursor;if(menuState.cursor>=menuState.scroll+shown)menuState.scroll=menuState.cursor-shown+1;
+ for(let i=menuState.scroll;i<Math.min(list.length,menuState.scroll+shown);i++){const item=list[i],Y=top+(i-menuState.scroll)*row;if(i===menuState.cursor)box(x+3,Y,w-6,row-2,0,'#a7c939');else line(x+10,Y+row-2,x+w-12,Y+row-2,'#383a36',1);
+ ctx.font='20px Arial';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=i===menuState.cursor?'#12170c':'#f5f6f2';ctx.fillText(item.label,x+21,Y+row/2,w-98);
+ ctx.textAlign='right';ctx.font='19px Arial';if(item.children)ctx.fillText('›',x+w-19,Y+row/2);else if(item.kind==='toggle')ctx.fillText(menuState.values.get(item)?'☑':'□',x+w-17,Y+row/2);else if(menuState.values.has(item))ctx.fillText(String(menuState.values.get(item)),x+w-18,Y+row/2,94);
+ }
+ if(list.length>shown){box(x+w-7,top,4,shown*row,0,'#353b2d');box(x+w-7,top+menuState.scroll*shown*row/list.length,4,Math.max(17,shown*shown*row/list.length),0,'#a6c638')}
+ const foot=y+h-32;box(x+1,foot,w-2,31,0,'#1c1e1e');text('PAGES  Back',x+110,foot+22,15,'#d6d8d1');text('▲ ▼  Navigate',x+264,foot+22,15,'#d6d8d1');text('↵  Select',x+421,foot+22,15,'#d6d8d1');ctx.restore();
+ if(menuState.dialog){const d=menuState.dialog;box(228,326,431,158,3,'#080a09','#9bbd39',2);box(230,328,427,36,0,'#333638');text(d.node.label,444,354,21,'#fff','bold');
+ const val=d.kind==='choice'?d.node.opts[d.index]:d.kind==='number'?String(d.value):'Preview only - no hardware';text(val,444,420,23,'#e9f0d6','bold');box(239,446,410,31,0,'#a4c939');text(d.kind==='info'?'ENTER  Fechar':'ENTER  Guardar     PAGES  Cancelar',444,468,16,'#11180a')}
+ ctx.restore();
+}
+function pointerKey(key,long=false,double=false){if(key==='pages')pagesKey(long);else if(key==='up')move(-1);else if(key==='down')move(1);else if(key==='enter')select();else if(key==='menu')menuKey(long,double)}
+function hitKey(x,y){if(y<663||y>760)return null;return x<238?'pages':x<375?'up':x<513?'enter':x<650?'down':'menu'}
+function coords(e){const r=canvas.getBoundingClientRect();return {x:OX+(e.clientX-r.left)*W/r.width,y:OY+(e.clientY-r.top)*H/r.height}}
+function onDown(e){canvas.focus?.();const p=coords(e),key=hitKey(p.x,p.y);menuState.pointer={key,at:Date.now(),x:p.x,y:p.y,fired:false};if(key){menuState.timer=setTimeout(()=>{if(menuState.pointer?.key===key){menuState.pointer.fired=true;if(key==='menu'||key==='pages')pointerKey(key,true)}},700);canvas.setPointerCapture?.(e.pointerId)} }
+function onUp(e){clearTimeout(menuState.timer);const p=menuState.pointer;menuState.pointer=null;if(!p)return;if(p.key){if(!p.fired){if(p.key==='menu'){const now=Date.now();if(now-menuState.lastMenu<420){menuState.lastMenu=0;pointerKey('menu',false,true)}else{menuState.lastMenu=now;pointerKey('menu')}}else pointerKey(p.key)}return}if(menuState.stack.length){const {x,y}=menuPoint(coords(e));if(x>=185&&x<=702&&y>=268&&y<564){const n=menuState.scroll+Math.floor((y-268)/37);if(n<entries().length){if(n===menuState.cursor)select();else{menuState.cursor=n;render()}}}return}handle(p.x,p.y)}
+function keyboard(e){const map={ArrowUp:'up',ArrowDown:'down',Enter:'enter',Escape:'pages',Backspace:'pages',PageDown:'pages',m:'menu',M:'menu'};if(e.key==='F2'){e.preventDefault();menuKey(false,true);return}if(e.key==='F3'){e.preventDefault();menuKey(true);return}if(e.key==='F4'){e.preventDefault();pagesKey(true);return}const key=map[e.key];if(key){e.preventDefault();pointerKey(key)}}
+
+canvas.addEventListener('pointerdown',onDown);canvas.addEventListener('pointerup',onUp);canvas.addEventListener('pointercancel',()=>{clearTimeout(menuState.timer);menuState.pointer=null});canvas.addEventListener('keydown',keyboard);
+function runSelfTests(){const results=[];
+ function check(label,condition){results.push({label,pass:!!condition})}
+ const savedRef=windView.reference,savedTwa=n2k.pgn130306.trueWindAngleDeg;
+ try{windView.reference='Auto';n2k.pgn130306.trueWindAngleDeg=69;check('Wind Auto <70 uses AWA',windReference()==='Apparent');
+ n2k.pgn130306.trueWindAngleDeg=70;check('Wind Auto >=70 uses TWA',windReference()==='True');
+ check('Exactly eight active pages',enabledPages.length===8&&new Set(enabledPages).size===8);
+ check('Laylines and Depth preserved',viewLibrary.includes('Laylines')&&viewLibrary.includes('Depth JPG'));
+ check('Linked depth canonical',pageData.depth===n2k.pgn128267.depthM&&demoValues.depth===pageData.depth);
+ check('Linked heading canonical',s.heading===n2k.pgn127250.headingDeg&&demoValues.heading===s.heading);
+ check('Display-only pilot',!('send' in window.tritonDisplay)&&!('transmit' in window.tritonDisplay));
+ }finally{windView.reference=savedRef;n2k.pgn130306.trueWindAngleDeg=savedTwa;render()}
+ return Object.freeze({passed:results.every(x=>x.pass),results});}
+window.tritonDisplay=Object.freeze({runSelfTests,windMode:Object.freeze({getState:()=>({...windView,activeReference:windReference(),valid:dataStatus.valid.wind,actualAngleDeg:dataStatus.valid.wind?windAngle():null}),setAngle(value){const v=Number(value);if(!Number.isFinite(v)||v< -180||v>180)throw new RangeError('Wind angle: -180..180');windView.setAngleDeg=Math.round(v);render();return windView.setAngleDeg},setReference(value){if(!['Auto','Apparent','True'].includes(value))throw new RangeError('Wind reference: Auto, Apparent or True');windView.reference=value;render();return value}}),status:Object.freeze({get:()=>({...dataStatus,valid:{...dataStatus.valid}}),set(patch){if(!patch||typeof patch!=='object')throw new TypeError('Status patch required');for(const k of Object.keys(patch)){if(k==='valid'){for(const [field,value] of Object.entries(patch.valid)){if(!Object.hasOwn(dataStatus.valid,field)||typeof value!=='boolean')throw new RangeError('Invalid validity');dataStatus.valid[field]=value}}else if(k==='h5000'){if(typeof patch[k]!=='boolean')throw new RangeError('H5000 flag');dataStatus.h5000=patch[k]}else if(k==='depthReference'){if(!['Transducer','Keel','Waterline'].includes(patch[k]))throw new RangeError('Depth reference');dataStatus[k]=patch[k]}else if(k==='depthOffsetM'){if(!Number.isFinite(patch[k]))throw new RangeError('Depth offset');dataStatus[k]=patch[k]}else if(k==='headingReference'){if(patch[k]!=='Magnetic')throw new RangeError('True heading requires magnetic variation; not implemented');dataStatus[k]=patch[k]}else throw new RangeError('Unknown status field: '+k)}render();return {...dataStatus,valid:{...dataStatus.valid}}}}),measurements:Object.freeze({get:measurement}),nmea2000:Object.freeze({getState:snapshot,setDemoValues,pauseDemo(){demoRunning=false},resumeDemo(){demoRunning=true},getHistory:()=>Object.fromEntries(Object.entries(history).map(([k,v])=>[k,v.slice()]))}),setValues,setHeading:v=>setValues({heading:v}),setWindAngle:v=>setValues({twa:v}),setWindDirection:v=>setValues({twd:v}),setApparentWindDirection:v=>setValues({awd:v}),setApparentWindAngle:v=>{const n=Number(v);if(!Number.isFinite(n)||n< -180||n>180)throw new RangeError('Apparent angle must be between -180 and 180');return setValues({awd:((s.heading+n)%360+360)%360})},setMode:v=>setValues({mode:v}),getState:()=>({...s}),views:Object.freeze({listLibrary:()=>viewLibrary.slice(),setActivePages,openLibrary(name){const key=viewLibrary.includes(name)?name:viewLibrary.find(k=>fullViewName(k)===name);openLibraryPage(key);menuState.stack=[];render();return key},setEnabledPages(keys){if(!Array.isArray(keys)||keys.length<1||keys.length>8||new Set(keys).size!==keys.length||keys.some(k=>!viewLibrary.includes(k)))throw new RangeError('Choose 1 to 8 unique library pages');enabledPages.splice(0,enabledPages.length,...keys);pageSlots.splice(0,pageSlots.length,...keys.map((v,i)=>({...pageSlotTemplates[i],label:`${i+1}  ${fullViewName(v)}`})));menuState.page=Math.min(menuState.page,keys.length-1);render();return keys.slice()},listReferences:()=>referencePageNames.map(fullViewName),listReferenceKeys:()=>referencePageNames.slice(),getPageName:()=>fullViewName(enabledPages[menuState.page]),isReference:name=>Object.hasOwn(referencePageMap,name)||Object.hasOwn(canvasReferencePages,name)||referencePageNames.some(k=>fullViewName(k)===name),select(name){const key=enabledPages.includes(name)?name:enabledPages.find(k=>fullViewName(k)===name);const index=enabledPages.indexOf(key);if(index<0)throw new RangeError('Page not enabled: '+name);menuState.page=index;menuState.stack=[];render();return key},getPage:()=>enabledPages[menuState.page],setDepthUnit(unit){if(unit!=='m'&&unit!=='ft')throw new RangeError('Depth unit: m or ft');pageData.depthUnit=unit;render();return unit},setData(patch){const limits={boatSpeed:[0,99.9],depth:[0,999.9],seaTemp:[-40,80],pilotHeading:[0,359],pilotTarget:[0,359],pilotDeviation:[0,99],rudderAngle:[-45,45]};for(const [key,val] of Object.entries(patch)){if(key==='depthUnit'){if(val!=='m'&&val!=='ft')throw new RangeError('Depth unit: m or ft');continue}if(!(key in limits)||!Number.isFinite(Number(val))||Number(val)<limits[key][0]||Number(val)>limits[key][1])throw new RangeError('Invalid display value: '+key)}Object.assign(pageData,patch);if(Object.keys(patch).some(key=>key!=='depthUnit')){demoRunning=false;sample()}render();return {...pageData}},getData:()=>({...pageData})}),menu:Object.freeze({openSettings:()=>enter(settings),openPage:()=>enter(pageMenu()),openDisplaySetup:()=>enter(displaySetup),press:pointerKey,back:goBack,getState:()=>({path:menuState.stack.map(n=>n.label),cursor:menuState.cursor,selected:entries()[menuState.cursor]?.label||null,dialog:menuState.dialog?.node.label||null,page:enabledPages[menuState.page],pageIndex:menuState.page,pages:enabledPages.slice(),pageCount:enabledPages.length})})});
+if('ResizeObserver'in window)new ResizeObserver(resize).observe(canvas);else window.addEventListener('resize',resize);resize();
+})();
+</script>
+<script data-triton2-swipe-v2>
+(() => {
+  'use strict';
+  // View navigation only. Never issues autopilot or network commands.
+  const canvas = document.getElementById('instrument');
+  const api = window.tritonDisplay;
+  if (!canvas || !api?.menu?.press || !api?.menu?.getState) return;
+  canvas.style.touchAction = 'none';
+  const SCREEN = {left:32, top:49, right:706, bottom:571};
+  const overlay = document.createElement('div');
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.setAttribute('data-triton2-swipe-overlay', '');
+  overlay.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;overflow:hidden;color:#fff;font:600 12px system-ui,Arial,sans-serif;text-shadow:0 1px 2px #000;';
+  const pill = 'position:absolute;background:rgba(15,27,34,.72);border-radius:12px;padding:2px 7px;line-height:1.4;white-space:nowrap;';
+  function badge(text, style) {
+    const el=document.createElement('span');
+    el.textContent=text;
+    el.style.cssText=pill+style;
+    overlay.appendChild(el);
+    return el;
+  }
+  const title=badge('', 'left:50%;top:4px;transform:translateX(-50%);width:96%;max-height:39px;overflow:hidden;white-space:normal;text-align:center;font-size:11px;line-height:1.25;');
+  document.body.appendChild(overlay);
+  function state() { try { return api.menu.getState(); } catch (_) { return null; } }
+  function closed(s) { return s && (!Array.isArray(s.path) || s.path.length === 0); }
+  function pageIndex(s) {
+    const value=s?.page ?? s?.pageIndex ?? s?.activePageIndex;
+    return Number.isInteger(value) && value >= 0 ? value : null;
+  }
+  function pageCount(s) {
+    const list=s?.pages ?? s?.pageSlots ?? api.pages;
+    return Array.isArray(list) && list.length ? list.length : 8;
+  }
+  function labelOf(value) {
+    if (typeof value === 'string') return value.trim();
+    if (value && typeof value === 'object') {
+      for (const key of ['name','title','label','viewName','pageName'])
+        if (typeof value[key] === 'string' && value[key].trim()) return value[key].trim();
+    }
+    return '';
+  }
+  function viewName(s) {
+    for (const key of ['viewName','pageName','pageTitle','activeView','activePage']) {
+      const name=labelOf(s?.[key]);
+      if (name) return name;
+    }
+    const index=pageIndex(s);
+    const pages=s?.pages ?? s?.pageSlots ?? api.pages;
+    if (index !== null && Array.isArray(pages)) {
+      const name=labelOf(pages[index]);
+      if (name) return name;
+    }
+    const name=labelOf(s?.page);
+    if (name) return name;
+    return index === null ? 'Vista atual' : 'Vista '+(index+1);
+  }
+  function toLocal(event) {
+    const box=canvas.getBoundingClientRect();
+    return {x:(event.clientX-box.left)*736/box.width,
+            y:(event.clientY-box.top)*716/box.height};
+  }
+  function onScreen(p) {
+    return p.x>=SCREEN.left && p.x<=SCREEN.right && p.y>=SCREEN.top && p.y<=SCREEN.bottom;
+  }
+  function update() {
+    const s=state(), box=canvas.getBoundingClientRect();
+    overlay.style.display=closed(s) && box.width>0 && box.height>0 ? 'block' : 'none';
+    if (overlay.style.display !== 'none') {
+      overlay.style.left=(box.left+SCREEN.left*box.width/736)+'px';
+      overlay.style.top=(box.top+SCREEN.bottom*box.height/716)+'px';
+      overlay.style.width=((SCREEN.right-SCREEN.left)*box.width/736)+'px';
+      overlay.style.height=(46*box.height/716)+'px';
+      const name=viewName(s);
+      title.textContent=api.views?.getPageName?.()||name;
+    }
+  }
+  // The existing Pages key advances one slot; backwards wraps over all other slots.
+  function navigate(step) {
+    const s=state();
+    if (!closed(s)) return;
+    const count=step>0 ? 1 : pageCount(s)-1;
+    for (let i=0;i<count;i++) api.menu.press('pages');
+    update();
+  }
+  let start=null;
+  canvas.addEventListener('pointerdown', event => {
+    const s=state();
+    if (!event.isPrimary || !closed(s)) { start=null; return; }
+    const p=toLocal(event);
+    start=onScreen(p) ? {id:event.pointerId,x:p.x,y:p.y} : null;
+  }, {capture:true});
+  canvas.addEventListener('pointercancel', () => {start=null;}, {capture:true});
+  canvas.addEventListener('pointerup', event => {
+    if (!start || start.id!==event.pointerId) return;
+    const initial=start;
+    start=null;
+    if (!closed(state())) return;
+    const p=toLocal(event);
+    if (!onScreen(p)) return;
+    const dx=p.x-initial.x, dy=p.y-initial.y;
+    const horizontal=Math.abs(dx)>=52 && Math.abs(dx)>=Math.abs(dy)*1.3;
+    const vertical=Math.abs(dy)>=52 && Math.abs(dy)>=Math.abs(dx)*1.3;
+    if (!horizontal && !vertical) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    navigate(horizontal ? (dx<0 ? 1 : -1) : (dy<0 ? 1 : -1));
+  }, {capture:true});
+  update();
+  // Synchronise title and visibility when existing keys/menus change the page.
+  setInterval(update, 150);
+  window.addEventListener('resize', update);
+  window.addEventListener('scroll', update, {passive:true});
+})();
+</script>
+
+<style>
+.demo-launcher{position:fixed;z-index:20;right:10px;bottom:10px;cursor:pointer;color:#fff;background:#344455;border:1px solid #637486;border-radius:6px;padding:8px 11px;font:13px Arial,sans-serif}
+.demo-launcher:focus-visible{outline:2px solid white}
+.demo-fallback{border:1px solid #637486;border-radius:10px;background:#171b20;color:#fff;max-width:min(94vw,430px);padding:16px;font:14px Arial,sans-serif}
+.demo-fallback::backdrop{background:#0009}
+.demo-fallback button{cursor:pointer;color:#fff;background:#344455;border:1px solid #637486;border-radius:5px;padding:9px;margin:3px}
+.demo-fallback button[aria-pressed="true"]{background:#a12424;border-color:#ffb5b5}
+</style>
+<button id="demo-launcher" class="demo-launcher" type="button" aria-label="Abrir janela de controlos de dados DEMO">Dados DEMO ↗</button>
+<dialog id="demo-fallback" class="demo-fallback" aria-label="Controlos de dados DEMO"></dialog>
+<script>
+(()=>{'use strict';
+const api=window.tritonDisplay;
+const scenarios={wind:{label:'Vento',page:'Wind Mode',valid:{wind:false}},depth:{label:'Profundidade',page:'Depth JPG',valid:{depth:false}},tide:{label:'Maré',page:'Tide',valid:{tide:false}},heading:{label:'Rumo',page:'Autopilot status',valid:{heading:false}},waypoint:{label:'Waypoint',page:'Highway',valid:{waypoint:false}},laylines:{label:'H5000',page:'Laylines',h5000:false},normal:{label:'Normal',page:'SailSteer'}};
+const launcher=document.getElementById('demo-launcher'),fallback=document.getElementById('demo-fallback');
+let controlWindow=null,selected='wind';
+function updateButtons(doc){
+ if(!doc)return;
+ doc.querySelectorAll('button[data-case]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.case===selected)));
+ const label=doc.querySelector('#demo-current');if(label)label.textContent='Estado: '+scenarios[selected].label;
+}
+function showScenario(name){
+ const choice=scenarios[name];if(!choice)throw new RangeError('Unknown simulation scenario');
+ api.status.set({valid:{wind:true,depth:true,heading:true,tide:true,waypoint:true},h5000:true});
+ if(choice.valid||choice.h5000===false)api.status.set({...(choice.valid?{valid:choice.valid}:{}),...(choice.h5000===false?{h5000:false}:{})});
+ if(api.menu.getState().pages.includes(choice.page))api.views.select(choice.page);
+ else api.views.openLibrary(choice.page);
+ selected=name;
+ if(controlWindow&&!controlWindow.closed)updateButtons(controlWindow.document);
+ updateButtons(fallback);
+ return {name,page:api.views.getPage(),status:api.status.get()};
+}
+function controlMarkup(){
+ return '<h1>Dados DEMO</h1><p>Estados simulados de dados indisponíveis.</p><div class="buttons" role="group" aria-label="Selecionar estado">'+
+ Object.entries(scenarios).map(([key,value])=>'<button type="button" data-case="'+key+'" aria-pressed="false">'+value.label+'</button>').join('')+
+ '</div><p id="demo-current" role="status"></p>';
+}
+function bindControls(doc){
+ doc.querySelectorAll('button[data-case]').forEach(b=>b.addEventListener('click',()=>showScenario(b.dataset.case)));
+ updateButtons(doc);
+}
+function openControls(){
+ if(controlWindow&&!controlWindow.closed){controlWindow.focus();return controlWindow}
+ // This call is made directly in the launcher click handler to comply with popup blockers.
+ controlWindow=window.open('','tritonDemoControls','popup=yes,width=460,height=360,resizable=yes,scrollbars=yes');
+ if(!controlWindow){
+  fallback.innerHTML=controlMarkup()+'<button type="button" id="demo-close">Fechar</button>';
+  bindControls(fallback);
+  fallback.querySelector('#demo-close').addEventListener('click',()=>fallback.close());
+  fallback.showModal();return null;
+ }
+ controlWindow.document.open();
+ controlWindow.document.write('<!doctype html><html lang="pt-PT"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dados DEMO - Triton2</title><style>body{margin:0;padding:18px;background:#171b20;color:#fff;font:14px Arial,sans-serif}h1{font-size:19px;margin:0 0 10px}.buttons{display:flex;flex-wrap:wrap;gap:8px}button{cursor:pointer;color:#fff;background:#344455;border:1px solid #637486;border-radius:5px;padding:10px 12px}button[aria-pressed="true"]{background:#a12424;border-color:#ffb5b5}button:focus-visible{outline:2px solid white}#demo-current{margin-top:18px}</style></head><body>'+controlMarkup()+'</body></html>');
+ controlWindow.document.close();
+ bindControls(controlWindow.document);
+ controlWindow.focus();return controlWindow;
+}
+window.tritonUnavailableDemo=Object.freeze({show:showScenario,open:openControls,scenarios:Object.keys(scenarios)});
+launcher.addEventListener('click',openControls);
+showScenario('wind');
+})();
+</script>
+</body>
+</html>
